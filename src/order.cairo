@@ -9,12 +9,12 @@ use starkware_utils::time::time::Timestamp;
 pub struct Order {
     pub salt: felt252,
     pub expiry: Timestamp,
-    pub address: ContractAddress,
+    pub maker: ContractAddress,
     pub public_key: PublicKey,
-    pub token_a: ContractAddress,
-    pub token_b: ContractAddress,
-    pub amount_a: i128,
-    pub amount_b: i128,
+    pub sell_token: ContractAddress,
+    pub buy_token: ContractAddress,
+    pub sell_amount: u128,
+    pub buy_amount: u128,
     // Addresses the user is willing to trade with. Empty means any address
     pub allowed_addresses: Span<ContractAddress>,
 }
@@ -24,23 +24,23 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
         let Order {
             salt,
             expiry,
-            address,
+            maker,
             public_key,
-            token_a,
-            token_b,
-            amount_a,
-            amount_b,
+            sell_token,
+            buy_token,
+            sell_amount,
+            buy_amount,
             allowed_addresses,
         } = value;
         state = state
             .update_with(salt)
             .update_with(expiry)
-            .update_with(address)
+            .update_with(maker)
             .update_with(public_key)
-            .update_with(token_a)
-            .update_with(token_b)
-            .update_with(amount_a)
-            .update_with(amount_b)
+            .update_with(sell_token)
+            .update_with(buy_token)
+            .update_with(sell_amount)
+            .update_with(buy_amount)
             .update_with(allowed_addresses.len());
         for elem in allowed_addresses {
             state = state.update_with(*elem);
@@ -50,16 +50,17 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
     }
 }
 
+
 /// selector!(
 ///   "\"Order\"(
 ///    \"salt\":\"felt\",
 ///    \"expiry\":\"Timestamp\",
-///    \"address\":\"ContractAddress\",
+///    \"maker\":\"ContractAddress\",
 ///    \"public_key\":\"PublicKey\",
-///    \"token_a\":\"ContractAddress\",
-///    \"token_b\":\"ContractAddress\",
-///    \"amount_a\":\"i128\",
-///    \"amount_b\":\"i128\",
+///    \"sell_token\":\"ContractAddress\",
+///    \"buy_token\":\"ContractAddress\",
+///    \"sell_amount\":\"u128\",
+///    \"buy_amount\":\"u128\",
 ///    \"allowed_addresses\":\"Span<ContractAddress>\"
 ///    )
 ///    \"Timestamp\"(
@@ -67,7 +68,7 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
 ///    )
 /// );
 
-const ORDER_TYPE_HASH: HashType = 0x2caf2213bfa7c5bbbb2f4b953b2716d0414cad77896d362df194b7f33513c12;
+const ORDER_TYPE_HASH: HashType = 0x147c5ae17a3f6a3b61bad97ea79f2f662cb051293a68dc4de4f3d3f28ff3703;
 
 impl StructHashImpl of StructHash<Order> {
     fn hash_struct(self: @Order) -> HashType {
@@ -84,7 +85,7 @@ mod tests {
     #[test]
     fn test_order_type_hash() {
         let expected = selector!(
-            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"address\":\"ContractAddress\",\"public_key\":\"PublicKey\",\"token_a\":\"ContractAddress\",\"token_b\":\"ContractAddress\",\"amount_a\":\"i128\",\"amount_b\":\"i128\",\"allowed_addresses\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
+            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"maker\":\"ContractAddress\",\"public_key\":\"PublicKey\",\"sell_token\":\"ContractAddress\",\"buy_token\":\"ContractAddress\",\"sell_amount\":\"u128\",\"buy_amount\":\"u128\",\"allowed_addresses\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
         );
         assert_eq!(ORDER_TYPE_HASH.into_base_16_string(), expected.into_base_16_string());
     }

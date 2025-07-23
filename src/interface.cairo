@@ -2,6 +2,8 @@ use starknet::ContractAddress;
 use starkware_utils::signature::stark::HashType;
 use crate::order::Order;
 
+pub type Signature = (felt252, felt252);
+
 #[derive(Copy, Drop, Debug, Serde, PartialEq, starknet::Store)]
 pub enum FulfilledStatus {
     #[default]
@@ -14,13 +16,12 @@ pub enum FulfilledStatus {
 pub trait IPayments<TContractState> {
     fn trade(
         ref self: TContractState,
-        recipient: ContractAddress,
         order_1: Order,
         order_2: Order,
-        signature_1: Span<felt252>,
-        signature_2: Span<felt252>,
-        actual_amount_a: u128,
-        actual_amount_b: u128,
+        signature_1: Signature,
+        signature_2: Signature,
+        actual_sell_amount: u128,
+        actual_buy_amount: u128,
     );
 
     fn register_token(ref self: TContractState, token: ContractAddress);

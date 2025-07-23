@@ -4,6 +4,7 @@ pub mod payments {
     use core::panic_with_felt252;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use openzeppelin::utils::snip12::SNIP12Metadata;
     use starknet::ContractAddress;
     use starknet::storage::{
@@ -11,6 +12,7 @@ pub mod payments {
         StoragePointerWriteAccess,
     };
     use starkware_utils::components::pausable::PausableComponent;
+    use starkware_utils::components::pausable::PausableComponent::InternalTrait as PausableInternal;
     use starkware_utils::components::replaceability::ReplaceabilityComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
@@ -18,9 +20,9 @@ pub mod payments {
     use starkware_utils::signature::stark::HashType;
     use crate::errors::{
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, ORDER_ALREADY_CANCELED,
-        ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
+        ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, TRANSFER_FAILED,
     };
-    use crate::interface::{FulfilledStatus, IPayments};
+    use crate::interface::{FulfilledStatus, IPayments, Signature};
     use crate::order::Order;
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -117,14 +119,76 @@ pub mod payments {
     pub impl PaymentsImpl of IPayments<ContractState> {
         fn trade(
             ref self: ContractState,
-            recipient: ContractAddress,
             order_1: Order,
             order_2: Order,
-            signature_1: Span<felt252>,
-            signature_2: Span<felt252>,
-            actual_amount_a: u128,
-            actual_amount_b: u128,
-        ) {}
+            signature_1: Signature,
+            signature_2: Signature,
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) {
+            self.pausable.assert_not_paused();
+
+            // Validate orders.
+            let order_hash_1 = self
+                ._validate_order(
+                    order: order_1, signature: signature_1, :actual_sell_amount, :actual_buy_amount,
+                );
+            let order_hash_2 = self
+                ._validate_order(
+                    order: order_2, signature: signature_2, :actual_sell_amount, :actual_buy_amount,
+                );
+
+            self
+                ._validate_match_orders(
+                    :order_1, :order_2, :actual_sell_amount, :actual_buy_amount,
+                );
+
+            // Update the fulfillment.
+            self
+                ._apply_fill(
+                    order_hash: order_hash_1,
+                    actual_amount: actual_sell_amount,
+                    order_amount: order_1.sell_amount,
+                );
+            self
+                ._apply_fill(
+                    order_hash: order_hash_2,
+                    actual_amount: actual_buy_amount,
+                    order_amount: order_2.sell_amount,
+                );
+
+            let sell_token = IERC20Dispatcher { contract_address: order_1.sell_token };
+            let buy_token = IERC20Dispatcher { contract_address: order_1.buy_token };
+
+            // Take fees.
+            let fee_recipient = self.fee_recipient.read();
+            let fee_1 = self._calculate_fee(actual_sell_amount);
+            let fee_2 = self._calculate_fee(actual_buy_amount);
+            assert(
+                sell_token.transfer_from(order_1.maker, fee_recipient, fee_1.into()),
+                TRANSFER_FAILED,
+            );
+            assert(
+                buy_token.transfer_from(order_2.maker, fee_recipient, fee_2.into()),
+                TRANSFER_FAILED,
+            );
+
+            // Transfer the actual amounts.
+            assert(
+                sell_token
+                    .transfer_from(
+                        order_1.maker, order_2.maker, (actual_sell_amount - fee_1).into(),
+                    ),
+                TRANSFER_FAILED,
+            );
+            assert(
+                buy_token
+                    .transfer_from(
+                        order_2.maker, order_1.maker, (actual_buy_amount - fee_2).into(),
+                    ),
+                TRANSFER_FAILED,
+            );
+        }
 
         fn register_token(ref self: ContractState, token: ContractAddress) {
             self.roles.only_app_governor();
@@ -206,6 +270,11 @@ pub mod payments {
             self.fee_recipient.write(recipient);
         }
 
+        fn _apply_fill(
+            ref self: ContractState, order_hash: HashType, actual_amount: u128, order_amount: u128,
+        ) { // TODO(Mohammad): Implement updating the fulfillment status.
+        }
+
         fn _cancel_order(ref self: ContractState, order_hash: HashType) {
             match self.fulfillment.read(order_hash) {
                 FulfilledStatus::Fulfilled(_) => { panic_with_felt252(ORDER_WAS_FULFILLED); },
@@ -214,6 +283,33 @@ pub mod payments {
                 },
                 FulfilledStatus::Canceled(_) => { panic_with_felt252(ORDER_ALREADY_CANCELED); },
             }
+        }
+
+        fn _validate_order(
+            self: @ContractState,
+            order: Order,
+            signature: Signature,
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) -> HashType { // TODO(Mohammad): Implement order validation logic.
+            // This should include checking the order's expiry, signature validity, and amounts.
+            Default::default()
+        }
+
+        fn _validate_match_orders(
+            self: @ContractState,
+            order_1: Order,
+            order_2: Order,
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) { // TODO(Mohammad): Implement logic to validate the two orders.
+        // This should include checking that the orders are compatible and that the amounts match.
+        }
+
+        fn _calculate_fee(self: @ContractState, amount: u128) -> u128 {
+            let fee = self.fee.read();
+            // TODO(Mohammad): Implement fee calculation logic.
+            fee
         }
     }
 }
