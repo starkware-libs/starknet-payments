@@ -1,17 +1,26 @@
 #[starknet::contract]
 pub mod payments {
+    use core::num::traits::Zero;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
-    use starknet::ContractAddress;
+    use starknet::storage::{
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess,
+    };
+    use starknet::{ContractAddress, get_caller_address};
     use starkware_utils::components::pausable::PausableComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
+    use starkware_utils::math::abs::Abs;
     use starkware_utils::signature::stark::HashType;
+    use crate::errors::{
+        INVALID_CALLER_ADDRESS, INVALID_HIGH_FEE, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED,
+        TOKEN_DOES_NOT_EXIST,
+    };
     use crate::interface::IPayments;
     use crate::order::Order;
-
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
@@ -47,6 +56,12 @@ pub mod payments {
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         // --- Payment ---
+        fee_recipient: ContractAddress,
+        fee: u128,
+        // Whitelisted tokens.
+        tokens: Map<ContractAddress, bool>,
+        // Order hash to fulfilled absolute base amount.
+        fulfillment: Map<HashType, u128>,
     }
 
     #[event]
@@ -75,6 +90,11 @@ pub mod payments {
     ) {
         self.roles.initialize(:governance_admin);
         self.replaceability.initialize(:upgrade_delay);
+
+        assert(fee_recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
+        self.fee_recipient.write(fee_recipient);
+        assert(fee <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE);
+        self.fee.write(fee);
     }
 
     // TODO(Mohammad): implement the IPayments trait methods.
@@ -91,27 +111,62 @@ pub mod payments {
             actual_amount_b: u128,
         ) {}
 
-        fn add_token(ref self: ContractState, token: ContractAddress) {}
-        fn remove_token(ref self: ContractState, token: ContractAddress) {}
+        fn register_token(ref self: ContractState, token: ContractAddress) {
+            self.roles.only_app_governor();
 
-        fn cancel_orders(ref self: ContractState, orders: Span<HashType>) {}
+            assert(token.is_non_zero(), INVALID_ZERO_ADDRESS);
+            assert(!self.tokens.read(token), TOKEN_ALREADY_REGISTERED);
+            self.tokens.write(token, true);
+        }
+        fn remove_token(ref self: ContractState, token: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(self.tokens.read(token), TOKEN_DOES_NOT_EXIST);
+            self.tokens.write(token, false);
+        }
+
+        fn cancel_orders(ref self: ContractState, orders: Span<Order>) {
+            let caller = get_caller_address();
+
+            for order in orders {
+                assert(*order.address == caller, INVALID_CALLER_ADDRESS);
+
+                // TODO(Mohammad): Replace with actual hash computation logic.
+                let order_hash: HashType = Default::default();
+                self.fulfillment.write(order_hash, order.amount_a.abs());
+            }
+        }
 
         // Setters:
 
-        fn set_fee(ref self: ContractState, fee: u128) {}
-        fn set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {}
+        fn set_fee(ref self: ContractState, fee: u128) {
+            self.roles.only_app_governor();
+
+            assert(fee <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE);
+            self.fee.write(fee);
+        }
+        fn set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
+            self.fee_recipient.write(recipient);
+        }
 
         // Getters:
 
         fn get_fee(self: @ContractState) -> u128 {
-            Default::default()
+            self.fee.read()
         }
         fn get_fee_recipient(self: @ContractState) -> ContractAddress {
-            'DUMMY_ADDRESS'.try_into().unwrap()
+            self.fee_recipient.read()
         }
 
         fn is_order_fulfilled(self: @ContractState, order: Order) -> bool {
-            Default::default()
+            // TODO(Mohammad): Replace with actual hash computation logic.
+            let order_hash: HashType = Default::default();
+            let fulfilled_amount = self.fulfillment.read(order_hash);
+            let ordered_amount = order.amount_a.abs();
+            ordered_amount == fulfilled_amount
         }
     }
 }

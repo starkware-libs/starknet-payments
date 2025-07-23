@@ -1,5 +1,4 @@
 use starknet::ContractAddress;
-use starkware_utils::signature::stark::HashType;
 use crate::order::Order;
 
 #[starknet::interface]
@@ -15,10 +14,10 @@ pub trait IPayments<TContractState> {
         actual_amount_b: u128,
     );
 
-    fn add_token(ref self: TContractState, token: ContractAddress);
+    fn register_token(ref self: TContractState, token: ContractAddress);
     fn remove_token(ref self: TContractState, token: ContractAddress);
 
-    fn cancel_orders(ref self: TContractState, orders: Span<HashType>);
+    fn cancel_orders(ref self: TContractState, orders: Span<Order>);
 
     // Setters:
 
