@@ -8,8 +8,8 @@ pub mod payments {
     use openzeppelin::utils::snip12::SNIP12Metadata;
     use starknet::ContractAddress;
     use starknet::storage::{
-        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
-        StoragePointerWriteAccess,
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePathEntry,
+        StoragePointerReadAccess, StoragePointerWriteAccess,
     };
     use starkware_utils::components::pausable::PausableComponent;
     use starkware_utils::components::pausable::PausableComponent::InternalTrait as PausableInternal;
@@ -17,10 +17,16 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
-    use starkware_utils::signature::stark::HashType;
+    use starkware_utils::hash::message_hash::OffchainMessageHash;
+    use starkware_utils::math::utils::mul_wide_and_ceil_div;
+    use starkware_utils::signature::stark::{HashType, validate_stark_signature};
+    use starkware_utils::time::time::Time;
     use crate::errors::{
-        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, ORDER_ALREADY_CANCELED,
-        ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, TRANSFER_FAILED,
+        INVALID_AMOUNT, INVALID_AMOUNT_RATIO, INVALID_DOWNCAST_AFTER_DIVISION, INVALID_HIGH_FEE,
+        INVALID_HIGH_FEE_LIMIT, INVALID_TOKEN_PAIR, INVALID_ZERO_ADDRESS, INVALID_ZERO_PUB_KEY,
+        INVALID_ZERO_TOKEN, ORDER_ALREADY_CANCELED, ORDER_ALREADY_FULFILLED, ORDER_EXPIRED,
+        ORDER_WAS_CANCELED, ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
+        TRANSFER_FAILED, UNALLOWED_ADDRESS,
     };
     use crate::interface::{FulfilledStatus, IPayments, Signature};
     use crate::order::Order;
@@ -128,6 +134,8 @@ pub mod payments {
         ) {
             self.pausable.assert_not_paused();
 
+            /// Trade validation:
+
             // Validate orders.
             let order_hash_1 = self
                 ._validate_order(
@@ -135,13 +143,23 @@ pub mod payments {
                 );
             let order_hash_2 = self
                 ._validate_order(
-                    order: order_2, signature: signature_2, :actual_sell_amount, :actual_buy_amount,
+                    order: order_2,
+                    signature: signature_2,
+                    // The actual amounts are from `order_1`'s perspective; they're reversed for
+                    // `order_2`.
+                    actual_sell_amount: actual_buy_amount,
+                    actual_buy_amount: actual_sell_amount,
                 );
+
+            assert(self.is_token_registered(order_1.sell_token), TOKEN_NOT_REGISTERED);
+            assert(self.is_token_registered(order_1.buy_token), TOKEN_NOT_REGISTERED);
 
             self
                 ._validate_match_orders(
                     :order_1, :order_2, :actual_sell_amount, :actual_buy_amount,
                 );
+
+            /// Trade execution:
 
             // Update the fulfillment.
             self
@@ -163,6 +181,7 @@ pub mod payments {
             // Take fees.
             let fee_recipient = self.fee_recipient.read();
             let fee_1 = self._calculate_fee(actual_sell_amount);
+            // The actual amounts are from `order_1`'s perspective; they're reversed for `order_2`.
             let fee_2 = self._calculate_fee(actual_buy_amount);
             assert(
                 sell_token.transfer_from(order_1.maker, fee_recipient, fee_1.into()),
@@ -270,9 +289,35 @@ pub mod payments {
             self.fee_recipient.write(recipient);
         }
 
+        fn _validate_fulfillment(
+            self: @ContractState, order_hash: HashType, actual_amount: u128, order_amount: u128,
+        ) {
+            let fulfillment_entry = self.fulfillment.entry(order_hash);
+            match fulfillment_entry.read() {
+                FulfilledStatus::Fulfilled(_) => { panic_with_felt252(ORDER_ALREADY_FULFILLED); },
+                FulfilledStatus::PartialFulfilled(fulfilled_amount) => {
+                    assert(fulfilled_amount + actual_amount <= order_amount, INVALID_AMOUNT);
+                },
+                FulfilledStatus::Canceled(_) => { panic_with_felt252(ORDER_WAS_CANCELED); },
+            }
+        }
+
         fn _apply_fill(
             ref self: ContractState, order_hash: HashType, actual_amount: u128, order_amount: u128,
-        ) { // TODO(Mohammad): Implement updating the fulfillment status.
+        ) {
+            let fulfillment_entry = self.fulfillment.entry(order_hash);
+            match fulfillment_entry.read() {
+                FulfilledStatus::Fulfilled(_) => { panic_with_felt252(ORDER_ALREADY_FULFILLED); },
+                FulfilledStatus::PartialFulfilled(fulfilled_amount) => {
+                    let total_amount = fulfilled_amount + actual_amount;
+                    if total_amount < order_amount {
+                        fulfillment_entry.write(FulfilledStatus::PartialFulfilled(total_amount));
+                    } else {
+                        fulfillment_entry.write(FulfilledStatus::Fulfilled(total_amount));
+                    }
+                },
+                FulfilledStatus::Canceled(_) => { panic_with_felt252(ORDER_WAS_CANCELED); },
+            }
         }
 
         fn _cancel_order(ref self: ContractState, order_hash: HashType) {
@@ -291,9 +336,38 @@ pub mod payments {
             signature: Signature,
             actual_sell_amount: u128,
             actual_buy_amount: u128,
-        ) -> HashType { // TODO(Mohammad): Implement order validation logic.
-            // This should include checking the order's expiry, signature validity, and amounts.
-            Default::default()
+        ) -> HashType {
+            assert(order.expiry >= Time::now(), ORDER_EXPIRED);
+            assert(order.maker.is_non_zero(), INVALID_ZERO_ADDRESS);
+            assert(order.public_key.is_non_zero(), INVALID_ZERO_PUB_KEY);
+
+            assert(order.sell_amount >= actual_sell_amount, INVALID_AMOUNT);
+            assert(order.buy_amount >= actual_buy_amount, INVALID_AMOUNT);
+
+            assert(order.sell_token.is_non_zero(), INVALID_ZERO_TOKEN);
+            assert(order.buy_token.is_non_zero(), INVALID_ZERO_TOKEN);
+            assert(order.sell_token != order.buy_token, INVALID_TOKEN_PAIR);
+
+            assert(
+                order.sell_amount * actual_buy_amount <= order.buy_amount * actual_sell_amount,
+                INVALID_AMOUNT_RATIO,
+            );
+
+            let order_hash: HashType = order.get_message_hash(public_key: order.public_key);
+            self
+                ._validate_fulfillment(
+                    order_hash: order_hash,
+                    actual_amount: actual_sell_amount,
+                    order_amount: order.sell_amount,
+                );
+
+            // Validate the signature.
+            let (r, s) = signature;
+            validate_stark_signature(
+                public_key: order.public_key, msg_hash: order_hash, signature: array![r, s].span(),
+            );
+
+            order_hash
         }
 
         fn _validate_match_orders(
@@ -302,14 +376,41 @@ pub mod payments {
             order_2: Order,
             actual_sell_amount: u128,
             actual_buy_amount: u128,
-        ) { // TODO(Mohammad): Implement logic to validate the two orders.
-        // This should include checking that the orders are compatible and that the amounts match.
+        ) {
+            // Validate the token pair.
+            assert(order_1.sell_token == order_2.buy_token, INVALID_TOKEN_PAIR);
+            assert(order_1.buy_token == order_2.sell_token, INVALID_TOKEN_PAIR);
+
+            // Validate allowed addresses.
+            self._validate_allowed_addresses(order_1.maker, order_2.allowed_addresses);
+            self._validate_allowed_addresses(order_2.maker, order_1.allowed_addresses);
+        }
+
+        fn _validate_allowed_addresses(
+            self: @ContractState, maker: ContractAddress, allowed_addresses: Span<ContractAddress>,
+        ) {
+            // Means all addresses are allowed.
+            if allowed_addresses.len() == 0 {
+                return;
+            }
+
+            // check if order_1.maker is in order_2.allowed_addresses.
+            let mut found = false;
+            for address in allowed_addresses {
+                if *address == maker {
+                    found = true;
+                    break;
+                }
+            }
+
+            assert(found, UNALLOWED_ADDRESS);
         }
 
         fn _calculate_fee(self: @ContractState, amount: u128) -> u128 {
             let fee = self.fee.read();
-            // TODO(Mohammad): Implement fee calculation logic.
-            fee
+
+            mul_wide_and_ceil_div(amount, fee, MAX_BASIS_POINTS.into())
+                .expect(INVALID_DOWNCAST_AFTER_DIVISION)
         }
     }
 }
