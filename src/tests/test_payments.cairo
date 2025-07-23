@@ -5,13 +5,15 @@ use snforge_std::{map_entry_address, store};
 use starknet::ContractAddress;
 use starknet_payments::errors;
 use starknet_payments::interface::{
-    FulfilledStatus, IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
+    IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
     IPaymentsSafeDispatcherTrait,
 };
+use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::test_utils::{
     assert_panic_with_error, assert_panic_with_felt_error, cheat_caller_address_once,
 };
 use starkware_utils_testing::{constants as testing_constants, test_utils};
+use crate::order::Order;
 
 pub mod constants {
     use super::*;
@@ -37,6 +39,19 @@ pub fn init_contract_with_roles() -> ContractAddress {
         contract: contract_address, governance_admin: testing_constants::GOVERNANCE_ADMIN,
     );
     contract_address
+}
+
+fn default_order() -> Order {
+    Order {
+        salt: 0,
+        expiry: Timestamp { seconds: 0 },
+        user: testing_constants::DUMMY_ADDRESS,
+        sell_token: testing_constants::DUMMY_ADDRESS,
+        buy_token: testing_constants::DUMMY_ADDRESS,
+        sell_amount: 100,
+        buy_amount: 200,
+        allowed_addresses: array![].span(),
+    }
 }
 
 #[test]
@@ -148,51 +163,55 @@ fn test_failed_set_fee() {
 fn test_successful_handle_order() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
-    let order_hashes = array!['order_hash_1', 'order_hash_2', 'order_hash_3'];
+
+    let order_1 = Order { sell_amount: 10, ..default_order() };
+    let order_2 = Order { salt: 2, sell_amount: 20, ..default_order() };
+    let order_3 = Order { salt: 3, sell_amount: 30, ..default_order() };
+    let orders = array![order_1, order_2, order_3];
+    let order_hashes = array![
+        3250832918082879608022746380123673061315069847566627860201489924189339339467,
+        3259641975931468454375849282716321416060344786234492516391729290818542841802,
+        3472711217305392937857639177600091754979974757056915903236482173645832579133,
+    ];
 
     for order_hash in order_hashes.span() {
-        assert_eq!(
-            dispatcher.get_order_fulfillment(*order_hash), FulfilledStatus::PartialFulfilled(0),
-        );
+        assert_eq!(dispatcher.get_order_fulfillment(*order_hash), 0);
     }
 
+    // Cancel order 1.
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
-    dispatcher.cancel_orders(order_hashes: array![*(order_hashes[0])].span());
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), FulfilledStatus::Canceled(0));
+    dispatcher.cancel_orders(orders: array![*(orders[0])].span());
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), 10);
     for order_hash in order_hashes.span().slice(1, 2) {
-        assert_eq!(
-            dispatcher.get_order_fulfillment(*order_hash), FulfilledStatus::PartialFulfilled(0),
-        );
+        assert_eq!(dispatcher.get_order_fulfillment(*order_hash), 0);
     }
 
-    // Cancel order 2.
+    // Partial fulfill order 2.
     store(
         contract_address,
         map_entry_address(
             selector!("fulfillment"), // storage variable name
             array![*(order_hashes[1])].span() // map key
         ),
-        array![2, 1].span(),
+        array![11].span(),
     );
 
     // Partial fulfill order 3.
     store(
         contract_address,
         map_entry_address(selector!("fulfillment"), array![*(order_hashes[2])].span()),
-        array![0, 10].span(),
+        array![25].span(),
     );
 
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), FulfilledStatus::Canceled(0));
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[1])), FulfilledStatus::Canceled(1));
-    assert_eq!(
-        dispatcher.get_order_fulfillment(*(order_hashes[2])), FulfilledStatus::PartialFulfilled(10),
-    );
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), 10);
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[1])), 11);
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[2])), 25);
 
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
-    dispatcher.cancel_orders(order_hashes: array![*(order_hashes[2])].span());
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), FulfilledStatus::Canceled(0));
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[1])), FulfilledStatus::Canceled(1));
-    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[2])), FulfilledStatus::Canceled(10));
+    dispatcher.cancel_orders(orders: array![*(orders[2])].span());
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), 10);
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[1])), 11);
+    assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[2])), 30);
 }
 
 #[test]
@@ -201,16 +220,7 @@ fn test_failed_handle_order() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsSafeDispatcher { contract_address };
 
-    let order_hash = 'order_hash';
-
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::DUMMY_ADDRESS);
-    let result = dispatcher.cancel_orders(order_hashes: array![order_hash].span());
+    let result = dispatcher.cancel_orders(orders: array![default_order()].span());
     assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
-
-    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
-    dispatcher.cancel_orders(order_hashes: array![order_hash].span()).unwrap();
-
-    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
-    let result = dispatcher.cancel_orders(order_hashes: array![order_hash].span());
-    assert_panic_with_felt_error(:result, expected_error: errors::ORDER_ALREADY_CANCELED);
 }
