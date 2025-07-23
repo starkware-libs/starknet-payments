@@ -1,3 +1,4 @@
+use core::num::traits::Zero;
 use openzeppelin::utils::serde::SerializedAppend;
 use openzeppelin_testing::deployment::declare_and_deploy;
 use starknet::ContractAddress;
@@ -87,4 +88,44 @@ fn test_failed_register_token() {
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
     let result = dispatcher.register_token(:token);
     assert_panic_with_felt_error(:result, expected_error: errors::TOKEN_ALREADY_REGISTERED);
+}
+
+#[test]
+fn test_successful_set_fee() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+    let fee_recipient: ContractAddress = 'fee_recipient'.try_into().unwrap();
+
+    assert!(dispatcher.get_fee() == constants::FEE);
+    assert!(dispatcher.get_fee_recipient() == constants::FEE_RECIPIENT);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.set_fee(fee: 10000);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.set_fee_recipient(recipient: fee_recipient);
+    assert!(dispatcher.get_fee() == 10000);
+    assert!(dispatcher.get_fee_recipient() == fee_recipient);
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_set_fee() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+    let fee_recipient: ContractAddress = 'fee_recipient'.try_into().unwrap();
+
+    let result = dispatcher.set_fee(fee: 321);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    let result = dispatcher.set_fee_recipient(recipient: fee_recipient);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.set_fee_recipient(recipient: Zero::zero());
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_ADDRESS);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.set_fee(fee: 10001);
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_HIGH_FEE);
 }

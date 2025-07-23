@@ -4,17 +4,21 @@ pub mod payments {
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
     use starknet::ContractAddress;
-    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
+    use starknet::storage::{
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess,
+    };
     use starkware_utils::components::pausable::PausableComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
     use starkware_utils::signature::stark::HashType;
-    use crate::errors::{INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED};
+    use crate::errors::{
+        INVALID_HIGH_FEE, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
+    };
     use crate::interface::IPayments;
     use crate::order::Order;
-
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
@@ -50,6 +54,8 @@ pub mod payments {
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         // --- Payment ---
+        fee_recipient: ContractAddress,
+        fee: u128,
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
     }
@@ -80,6 +86,9 @@ pub mod payments {
     ) {
         self.roles.initialize(:governance_admin);
         self.replaceability.initialize(:upgrade_delay);
+
+        self._set_fee_recipient(fee_recipient);
+        self._set_fee(fee);
     }
 
     // TODO(Mohammad): implement the IPayments trait methods.
@@ -117,20 +126,43 @@ pub mod payments {
 
         // Setters:
 
-        fn set_fee(ref self: ContractState, fee: u128) {}
-        fn set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {}
+        fn set_fee(ref self: ContractState, fee: u128) {
+            self.roles.only_app_governor();
+
+            self._set_fee(fee);
+        }
+        fn set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
+            self.roles.only_app_governor();
+
+            self._set_fee_recipient(recipient);
+        }
 
         // Getters:
 
         fn get_fee(self: @ContractState) -> u128 {
-            Default::default()
+            self.fee.read()
         }
         fn get_fee_recipient(self: @ContractState) -> ContractAddress {
-            'DUMMY_ADDRESS'.try_into().unwrap()
+            self.fee_recipient.read()
         }
 
         fn is_order_fulfilled(self: @ContractState, order: Order) -> bool {
             Default::default()
+        }
+    }
+
+
+    // Internal methods
+    #[generate_trait]
+    pub impl ImplInternalPayments of InternalPaymentsTrait {
+        fn _set_fee(ref self: ContractState, fee: u128) {
+            assert(fee <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE);
+            self.fee.write(fee);
+        }
+
+        fn _set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
+            assert(recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
+            self.fee_recipient.write(recipient);
         }
     }
 }
