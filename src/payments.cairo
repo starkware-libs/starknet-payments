@@ -3,12 +3,14 @@ pub mod payments {
     use core::num::traits::Zero;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::ContractAddress;
     use starknet::storage::{
-        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
-        StoragePointerWriteAccess,
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePathEntry,
+        StoragePointerReadAccess, StoragePointerWriteAccess,
     };
     use starkware_utils::components::pausable::PausableComponent;
+    use starkware_utils::components::pausable::PausableComponent::InternalTrait as PausableInternal;
     use starkware_utils::components::replaceability::ReplaceabilityComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
@@ -16,7 +18,7 @@ pub mod payments {
     use starkware_utils::signature::stark::HashType;
     use crate::errors::{
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED,
-        TOKEN_NOT_REGISTERED,
+        TOKEN_NOT_REGISTERED, TRANSFER_FAILED,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
@@ -60,6 +62,8 @@ pub mod payments {
         fee: u128,
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
+        // Order hash to fulfilled absolute base amount.
+        fulfillment: Map<HashType, u128>,
     }
 
     #[event]
@@ -99,14 +103,60 @@ pub mod payments {
     pub impl PaymentsImpl of IPayments<ContractState> {
         fn trade(
             ref self: ContractState,
-            recipient: ContractAddress,
             order_1: Order,
             order_2: Order,
             signature_1: Span<felt252>,
             signature_2: Span<felt252>,
-            actual_amount_a: u128,
-            actual_amount_b: u128,
-        ) {}
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) {
+            self.pausable.assert_not_paused();
+
+            // Validate orders.
+            let order_hash_1 = self
+                ._validate_order(
+                    order: order_1, signature: signature_1, :actual_sell_amount, :actual_buy_amount,
+                );
+            let order_hash_2 = self
+                ._validate_order(
+                    order: order_2, signature: signature_2, :actual_sell_amount, :actual_buy_amount,
+                );
+
+            self
+                ._validate_match_orders(
+                    :order_1, :order_2, :actual_sell_amount, :actual_buy_amount,
+                );
+
+            // Update the fulfillment.
+            let fulfillment_entry_1 = self.fulfillment.entry(order_hash_1);
+            fulfillment_entry_1.write(fulfillment_entry_1.read() + actual_sell_amount);
+            let fulfillment_entry_2 = self.fulfillment.entry(order_hash_2);
+            fulfillment_entry_2.write(fulfillment_entry_2.read() + actual_sell_amount);
+
+            let sell_token = IERC20Dispatcher { contract_address: order_1.sell_token };
+            let buy_token = IERC20Dispatcher { contract_address: order_1.buy_token };
+
+            // Take fees.
+            let fee = self._calculate_fee(actual_sell_amount);
+            let fee_recipient = self.fee_recipient.read();
+            assert(
+                sell_token.transfer_from(order_1.maker, fee_recipient, fee.into()), TRANSFER_FAILED,
+            );
+            assert(
+                sell_token.transfer_from(order_2.maker, fee_recipient, fee.into()), TRANSFER_FAILED,
+            );
+
+            // Transfer the actual amounts.
+            assert(
+                sell_token
+                    .transfer_from(order_1.maker, order_2.maker, (actual_sell_amount - fee).into()),
+                TRANSFER_FAILED,
+            );
+            assert(
+                buy_token.transfer_from(order_2.maker, order_1.maker, actual_buy_amount.into()),
+                TRANSFER_FAILED,
+            );
+        }
 
         fn register_token(ref self: ContractState, token: ContractAddress) {
             self.roles.only_app_governor();
@@ -180,6 +230,33 @@ pub mod payments {
         fn _set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
             assert(recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
             self.fee_recipient.write(recipient);
+        }
+
+        fn _validate_order(
+            self: @ContractState,
+            order: Order,
+            signature: Span<felt252>,
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) -> HashType { // TODO(Mohammad): Implement order validation logic.
+            // This should include checking the order's expiry, signature validity, and amounts.
+            Default::default()
+        }
+
+        fn _validate_match_orders(
+            self: @ContractState,
+            order_1: Order,
+            order_2: Order,
+            actual_sell_amount: u128,
+            actual_buy_amount: u128,
+        ) { // TODO(Mohammad): Implement logic to validate the two orders.
+        // This should include checking that the orders are compatible and that the amounts match.
+        }
+
+        fn _calculate_fee(self: @ContractState, amount: u128) -> u128 {
+            let fee = self.fee.read();
+            // TODO(Mohammad): Implement fee calculation logic.
+            fee
         }
     }
 }

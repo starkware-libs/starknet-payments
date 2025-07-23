@@ -6,13 +6,12 @@ use crate::order::Order;
 pub trait IPayments<TContractState> {
     fn trade(
         ref self: TContractState,
-        recipient: ContractAddress,
         order_1: Order,
         order_2: Order,
         signature_1: Span<felt252>,
         signature_2: Span<felt252>,
-        actual_amount_a: u128,
-        actual_amount_b: u128,
+        actual_sell_amount: u128,
+        actual_buy_amount: u128,
     );
 
     fn register_token(ref self: TContractState, token: ContractAddress);
