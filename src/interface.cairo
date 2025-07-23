@@ -14,10 +14,10 @@ pub enum FulfilledStatus {
 pub trait IPayments<TContractState> {
     fn trade(
         ref self: TContractState,
-        order_1: Order,
-        order_2: Order,
-        signature_1: Signature,
-        signature_2: Signature,
+        seller_order: Order,
+        buyer_order: Order,
+        seller_signature: Signature,
+        buyer_signature: Signature,
         actual_sell_amount: u128,
         actual_buy_amount: u128,
     );
