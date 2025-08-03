@@ -10,11 +10,11 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
+    use starkware_utils::math::abs::Abs;
     use starkware_utils::signature::stark::HashType;
     use crate::errors::{INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED};
     use crate::interface::IPayments;
     use crate::order::Order;
-
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
@@ -52,6 +52,8 @@ pub mod payments {
         // --- Payment ---
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
+        // Order hash to fulfilled absolute base amount.
+        fulfillment: Map<HashType, u128>,
     }
 
     #[event]
@@ -113,7 +115,15 @@ pub mod payments {
             self.tokens.read(token)
         }
 
-        fn cancel_orders(ref self: ContractState, orders: Span<HashType>) {}
+        fn cancel_orders(ref self: ContractState, orders: Span<Order>) {
+            self.roles.only_operator();
+
+            for order in orders {
+                // TODO(Mohammad): Replace with actual hash computation logic.
+                let order_hash: HashType = Default::default();
+                self.fulfillment.write(order_hash, order.amount_a.abs());
+            }
+        }
 
         // Setters:
 
@@ -130,7 +140,11 @@ pub mod payments {
         }
 
         fn is_order_fulfilled(self: @ContractState, order: Order) -> bool {
-            Default::default()
+            // TODO(Mohammad): Replace with actual hash computation logic.
+            let order_hash: HashType = Default::default();
+            let fulfilled_amount = self.fulfillment.read(order_hash);
+            let ordered_amount = order.amount_a.abs();
+            ordered_amount == fulfilled_amount
         }
     }
 }
