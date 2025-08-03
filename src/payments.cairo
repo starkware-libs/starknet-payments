@@ -1,8 +1,10 @@
 #[starknet::contract]
 pub mod payments {
     use core::num::traits::Zero;
+    use core::panic_with_felt252;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::utils::snip12::SNIP12Metadata;
     use starknet::ContractAddress;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
@@ -15,10 +17,10 @@ pub mod payments {
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
     use starkware_utils::signature::stark::HashType;
     use crate::errors::{
-        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED,
-        TOKEN_NOT_REGISTERED,
+        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, ORDER_ALREADY_CANCELED,
+        ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
     };
-    use crate::interface::IPayments;
+    use crate::interface::{FulfilledStatus, IPayments};
     use crate::order::Order;
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -41,6 +43,19 @@ pub mod payments {
 
     const MAX_BASIS_POINTS: u32 = 10000;
 
+    const NAME: felt252 = 'Madu';
+    const VERSION: felt252 = 'v0';
+
+    /// Required for hash computation.
+    pub impl SNIP12MetadataImpl of SNIP12Metadata {
+        fn name() -> felt252 {
+            NAME
+        }
+        fn version() -> felt252 {
+            VERSION
+        }
+    }
+
     #[storage]
     struct Storage {
         // --- Components ---
@@ -60,6 +75,8 @@ pub mod payments {
         fee: u128,
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
+        // Order hash to fulfilled absolute base amount.
+        fulfillment: Map<HashType, FulfilledStatus>,
     }
 
     #[event]
@@ -76,6 +93,7 @@ pub mod payments {
         #[flat]
         SRC5Event: SRC5Component::Event,
     }
+
 
     #[constructor]
     pub fn constructor(
@@ -125,7 +143,13 @@ pub mod payments {
             self.tokens.read(token)
         }
 
-        fn cancel_orders(ref self: ContractState, orders: Span<HashType>) {}
+        fn cancel_orders(ref self: ContractState, order_hashes: Span<HashType>) {
+            self.roles.only_operator();
+
+            for order_hash in order_hashes {
+                self._cancel_order(order_hash: *order_hash);
+            }
+        }
 
         // Setters:
 
@@ -158,8 +182,8 @@ pub mod payments {
             self.fee_recipient.read()
         }
 
-        fn is_order_fulfilled(self: @ContractState, order: Order) -> bool {
-            Default::default()
+        fn get_order_fulfillment(self: @ContractState, order_hash: HashType) -> FulfilledStatus {
+            self.fulfillment.read(order_hash)
         }
     }
 
@@ -180,6 +204,16 @@ pub mod payments {
         fn _set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
             assert(recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
             self.fee_recipient.write(recipient);
+        }
+
+        fn _cancel_order(ref self: ContractState, order_hash: HashType) {
+            match self.fulfillment.read(order_hash) {
+                FulfilledStatus::Fulfilled(_) => { panic_with_felt252(ORDER_WAS_FULFILLED); },
+                FulfilledStatus::PartialFulfilled(fulfilled_amount) => {
+                    self.fulfillment.write(order_hash, FulfilledStatus::Canceled(fulfilled_amount));
+                },
+                FulfilledStatus::Canceled(_) => { panic_with_felt252(ORDER_ALREADY_CANCELED); },
+            }
         }
     }
 }
