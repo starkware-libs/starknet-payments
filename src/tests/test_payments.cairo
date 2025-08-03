@@ -4,13 +4,15 @@ use openzeppelin_testing::deployment::declare_and_deploy;
 use starknet::ContractAddress;
 use starknet_payments::errors;
 use starknet_payments::interface::{
-    IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
+    FulfilledStatus, IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
     IPaymentsSafeDispatcherTrait,
 };
+use starkware_utils::time::time::Time;
 use starkware_utils_testing::test_utils::{
     assert_panic_with_error, assert_panic_with_felt_error, cheat_caller_address_once,
 };
 use starkware_utils_testing::{constants as testing_constants, test_utils};
+use crate::order::Order;
 
 pub mod constants {
     use super::*;
@@ -140,4 +142,68 @@ fn test_failed_set_fee() {
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
     let result = dispatcher.set_fee_limit(fee_limit: 10001);
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_HIGH_FEE_LIMIT);
+}
+
+
+#[test]
+fn test_successful_handle_order() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+
+    let order_1 = Order {
+        salt: 1,
+        expiry: Time::now(),
+        address: testing_constants::DUMMY_ADDRESS,
+        public_key: 123456789,
+        token_a: 'token_a'.try_into().unwrap(),
+        token_b: 'token_b'.try_into().unwrap(),
+        amount_a: 123,
+        amount_b: 456,
+        recipient_addresses: array![].span(),
+    };
+    let order_2 = Order { salt: 2, ..order_1 };
+    let order_3 = Order { amount_a: 132, ..order_1 };
+
+    assert_eq!(dispatcher.get_order_fulfillment(order_1), FulfilledStatus::PartialFulfilled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_2), FulfilledStatus::PartialFulfilled(0));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(orders: array![order_1].span());
+    assert_eq!(dispatcher.get_order_fulfillment(order_1), FulfilledStatus::Canceled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_2), FulfilledStatus::PartialFulfilled(0));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(orders: array![order_2, order_3].span());
+    assert_eq!(dispatcher.get_order_fulfillment(order_1), FulfilledStatus::Canceled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_2), FulfilledStatus::Canceled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_3), FulfilledStatus::Canceled(0));
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_handle_order() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+
+    let order = Order {
+        salt: 1,
+        expiry: Time::now(),
+        address: testing_constants::DUMMY_ADDRESS,
+        public_key: 123456789,
+        token_a: 'TOKEN_A'.try_into().unwrap(),
+        token_b: 'TOKEN_B'.try_into().unwrap(),
+        amount_a: 123,
+        amount_b: 456,
+        recipient_addresses: array![].span(),
+    };
+
+    let result = dispatcher.cancel_orders(orders: array![order].span());
+    assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(orders: array![order].span()).unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    let result = dispatcher.cancel_orders(orders: array![order].span());
+    assert_panic_with_felt_error(:result, expected_error: errors::ORDER_ALREADY_CANCELED);
 }
