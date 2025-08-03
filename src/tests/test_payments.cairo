@@ -4,7 +4,7 @@ use openzeppelin_testing::deployment::declare_and_deploy;
 use starknet::ContractAddress;
 use starknet_payments::errors;
 use starknet_payments::interface::{
-    IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
+    FulfilledStatus, IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
     IPaymentsSafeDispatcherTrait,
 };
 use starkware_utils_testing::test_utils::{
@@ -140,4 +140,54 @@ fn test_failed_set_fee() {
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
     let result = dispatcher.set_fee_limit(fee_limit: 10001);
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_HIGH_FEE_LIMIT);
+}
+
+
+#[test]
+fn test_successful_handle_order() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+
+    let order_hash_1 = 'order_hash_1';
+    let order_hash_2 = 'order_hash_2';
+    let order_hash_3 = 'order_hash_3';
+
+    assert_eq!(
+        dispatcher.get_order_fulfillment(order_hash_1), FulfilledStatus::PartialFulfilled(0),
+    );
+    assert_eq!(
+        dispatcher.get_order_fulfillment(order_hash_2), FulfilledStatus::PartialFulfilled(0),
+    );
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(order_hashes: array![order_hash_1].span());
+    assert_eq!(dispatcher.get_order_fulfillment(order_hash_1), FulfilledStatus::Canceled(0));
+    assert_eq!(
+        dispatcher.get_order_fulfillment(order_hash_2), FulfilledStatus::PartialFulfilled(0),
+    );
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(order_hashes: array![order_hash_2, order_hash_3].span());
+    assert_eq!(dispatcher.get_order_fulfillment(order_hash_1), FulfilledStatus::Canceled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_hash_2), FulfilledStatus::Canceled(0));
+    assert_eq!(dispatcher.get_order_fulfillment(order_hash_3), FulfilledStatus::Canceled(0));
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_handle_order() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+
+    let order_hash = 'order_hash';
+
+    let result = dispatcher.cancel_orders(order_hashes: array![order_hash].span());
+    assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(order_hashes: array![order_hash].span()).unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    let result = dispatcher.cancel_orders(order_hashes: array![order_hash].span());
+    assert_panic_with_felt_error(:result, expected_error: errors::ORDER_ALREADY_CANCELED);
 }
