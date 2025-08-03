@@ -18,7 +18,7 @@ pub trait IPayments<TContractState> {
     fn add_token(ref self: TContractState, token: ContractAddress);
     fn remove_token(ref self: TContractState, token: ContractAddress);
 
-    fn cancel_orders(ref self: TContractState, orders: Span<HashType>);
+    fn cancel_orders(ref self: TContractState, orders: Span<Order>);
 
     // Setters:
 
