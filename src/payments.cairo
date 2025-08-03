@@ -1,6 +1,7 @@
 #[starknet::contract]
 pub mod payments {
     use core::num::traits::Zero;
+    use core::panic_with_felt252;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::utils::snip12::SNIP12Metadata;
@@ -14,12 +15,13 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
+    use starkware_utils::hash::message_hash::OffchainMessageHash;
     use starkware_utils::signature::stark::HashType;
     use crate::errors::{
-        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED,
-        TOKEN_NOT_REGISTERED,
+        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, ORDER_ALREADY_CANCELED,
+        ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
     };
-    use crate::interface::IPayments;
+    use crate::interface::{FulfilledStatus, IPayments};
     use crate::order::Order;
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -74,6 +76,8 @@ pub mod payments {
         fee: u128,
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
+        // Order hash to fulfilled absolute base amount.
+        fulfillment: Map<HashType, FulfilledStatus>,
     }
 
     #[event]
@@ -90,6 +94,7 @@ pub mod payments {
         #[flat]
         SRC5Event: SRC5Component::Event,
     }
+
 
     #[constructor]
     pub fn constructor(
@@ -139,7 +144,22 @@ pub mod payments {
             self.tokens.read(token)
         }
 
-        fn cancel_orders(ref self: ContractState, orders: Span<HashType>) {}
+        fn cancel_orders(ref self: ContractState, orders: Span<Order>) {
+            self.roles.only_operator();
+
+            for order in orders {
+                let order_hash = order.get_message_hash(public_key: *order.public_key);
+                match self.fulfillment.read(order_hash) {
+                    FulfilledStatus::Fulfilled => { panic_with_felt252(ORDER_WAS_FULFILLED); },
+                    FulfilledStatus::PartialFulfilled(fulfilled_amount) => {
+                        self
+                            .fulfillment
+                            .write(order_hash, FulfilledStatus::Canceled(fulfilled_amount));
+                    },
+                    FulfilledStatus::Canceled(_) => { panic_with_felt252(ORDER_ALREADY_CANCELED); },
+                }
+            }
+        }
 
         // Setters:
 
@@ -172,8 +192,9 @@ pub mod payments {
             self.fee_recipient.read()
         }
 
-        fn is_order_fulfilled(self: @ContractState, order: Order) -> bool {
-            Default::default()
+        fn get_order_fulfillment(self: @ContractState, order: Order) -> FulfilledStatus {
+            let order_hash = order.get_message_hash(public_key: order.public_key);
+            self.fulfillment.read(order_hash)
         }
     }
 
