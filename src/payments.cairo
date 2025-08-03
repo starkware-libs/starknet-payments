@@ -1,14 +1,17 @@
 #[starknet::contract]
 pub mod payments {
+    use core::num::traits::Zero;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
     use starknet::ContractAddress;
+    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
     use starkware_utils::components::pausable::PausableComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent;
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
     use starkware_utils::signature::stark::HashType;
+    use crate::errors::{INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED, TOKEN_DOES_NOT_EXIST};
     use crate::interface::IPayments;
     use crate::order::Order;
 
@@ -47,6 +50,8 @@ pub mod payments {
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         // --- Payment ---
+        // Whitelisted tokens.
+        tokens: Map<ContractAddress, bool>,
     }
 
     #[event]
@@ -91,8 +96,22 @@ pub mod payments {
             actual_amount_b: u128,
         ) {}
 
-        fn add_token(ref self: ContractState, token: ContractAddress) {}
-        fn remove_token(ref self: ContractState, token: ContractAddress) {}
+        fn register_token(ref self: ContractState, token: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(token.is_non_zero(), INVALID_ZERO_ADDRESS);
+            assert(!self.is_token_registered(token), TOKEN_ALREADY_REGISTERED);
+            self.tokens.write(token, true);
+        }
+        fn remove_token(ref self: ContractState, token: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(self.is_token_registered(token), TOKEN_DOES_NOT_EXIST);
+            self.tokens.write(token, false);
+        }
+        fn is_token_registered(self: @ContractState, token: ContractAddress) -> bool {
+            self.tokens.read(token)
+        }
 
         fn cancel_orders(ref self: ContractState, orders: Span<HashType>) {}
 
