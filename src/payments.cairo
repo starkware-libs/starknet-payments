@@ -3,6 +3,7 @@ pub mod payments {
     use core::num::traits::Zero;
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::utils::snip12::SNIP12Metadata;
     use starknet::ContractAddress;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
@@ -40,6 +41,19 @@ pub mod payments {
     impl PausableImpl = PausableComponent::PausableImpl<ContractState>;
 
     const MAX_BASIS_POINTS: u32 = 10000;
+
+    const NAME: felt252 = 'Madu';
+    const VERSION: felt252 = 'v0';
+
+    /// Required for hash computation.
+    pub impl SNIP12MetadataImpl of SNIP12Metadata {
+        fn name() -> felt252 {
+            NAME
+        }
+        fn version() -> felt252 {
+            VERSION
+        }
+    }
 
     #[storage]
     struct Storage {
