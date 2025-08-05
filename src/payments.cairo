@@ -17,7 +17,9 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
+    use starkware_utils::math::utils::mul_wide_and_ceil_div;
     use starkware_utils::signature::stark::HashType;
+    use starkware_utils::time::time::Time;
     use crate::errors::{
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, TOKEN_ALREADY_REGISTERED,
         TOKEN_NOT_REGISTERED, TRANSFER_FAILED,
@@ -119,29 +121,34 @@ pub mod payments {
             self.roles.only_operator();
 
             // Validate orders.
-            self
+            let order_hash_1 = self
                 ._validate_order(
                     order: order_1, signature: signature_1, :actual_sell_amount, :actual_buy_amount,
                 );
-            self
+            let order_hash_2 = self
                 ._validate_order(
-                    order: order_2, signature: signature_2, :actual_sell_amount, :actual_buy_amount,
+                    order: order_2,
+                    signature: signature_2,
+                    // The actual amounts are from `order_1`'s perspective; they're reversed for
+                    // `order_2`.
+                    actual_sell_amount: actual_buy_amount,
+                    actual_buy_amount: actual_sell_amount,
                 );
 
-            self._validate_orders(:order_1, :order_2, :actual_sell_amount, :actual_buy_amount);
+            // Validate the token pair.
+            assert(order_1.sell_token == order_2.buy_token, 'INVALID_TOKEN_PAIR');
+            assert(order_1.buy_token == order_2.sell_token, 'INVALID_TOKEN_PAIR');
+            assert(self.is_token_registered(order_1.sell_token), TOKEN_NOT_REGISTERED);
+            assert(self.is_token_registered(order_1.buy_token), TOKEN_NOT_REGISTERED);
 
             // Update the fulfillment.
-
-            // TODO(Mohammad): Replace with actual hash computation logic.
-            let order_hash_1: HashType = Default::default();
-            let order_hash_2: HashType = Default::default();
             let fulfillment_entry_1 = self.fulfillment.entry(order_hash_1);
-            let fulfillment_entry_2 = self.fulfillment.entry(order_hash_2);
             fulfillment_entry_1.write(fulfillment_entry_1.read() + actual_sell_amount);
-            fulfillment_entry_2.write(fulfillment_entry_2.read() + actual_sell_amount);
+            let fulfillment_entry_2 = self.fulfillment.entry(order_hash_2);
+            // The actual amounts are from `order_1`'s perspective; they're reversed for `order_2`.
+            fulfillment_entry_2.write(fulfillment_entry_2.read() + actual_buy_amount);
 
             // pass the fees.
-            let fee = self._calculate_fee(actual_sell_amount);
             let fee_recipient = self.fee_recipient.read();
             let sell_token = IERC20Dispatcher { contract_address: order_1.sell_token };
             let buy_token = IERC20Dispatcher { contract_address: order_1.buy_token };
@@ -168,21 +175,31 @@ pub mod payments {
                     signature: permit_signature_2,
                 );
 
+            let fee_amount_1 = self._calculate_fee(actual_sell_amount);
             assert(
-                sell_token.transfer_from(order_1.maker, fee_recipient, fee.into()), TRANSFER_FAILED,
+                sell_token.transfer_from(order_1.maker, fee_recipient, fee_amount_1.into()),
+                TRANSFER_FAILED,
             );
+            // The actual amounts are from `order_1`'s perspective; they're reversed for `order_2`.
+            let fee_amount_2 = self._calculate_fee(actual_buy_amount);
             assert(
-                sell_token.transfer_from(order_2.maker, fee_recipient, fee.into()), TRANSFER_FAILED,
+                sell_token.transfer_from(order_2.maker, fee_recipient, fee_amount_2.into()),
+                TRANSFER_FAILED,
             );
 
             // Transfer the actual amounts.
             assert(
                 sell_token
-                    .transfer_from(order_1.maker, order_2.maker, (actual_sell_amount - fee).into()),
+                    .transfer_from(
+                        order_1.maker, order_2.maker, (actual_sell_amount - fee_amount_1).into(),
+                    ),
                 TRANSFER_FAILED,
             );
             assert(
-                buy_token.transfer_from(order_2.maker, order_1.maker, actual_buy_amount.into()),
+                buy_token
+                    .transfer_from(
+                        order_2.maker, order_1.maker, (actual_buy_amount - fee_amount_2).into(),
+                    ),
                 TRANSFER_FAILED,
             );
         }
@@ -267,24 +284,38 @@ pub mod payments {
             signature: Span<felt252>,
             actual_sell_amount: u128,
             actual_buy_amount: u128,
-        ) { // TODO(Mohammad): Implement order validation logic.
-        // This should include checking the order's expiry, signature validity, and amounts.
-        }
+        ) -> HashType {
+            assert(order.expiry >= Time::now(), 'ORDER_EXPIRED');
+            assert(order.maker.is_non_zero(), 'INVALID_ZERO_MAKER');
+            assert(order.public_key.is_non_zero(), 'INVALID_ZERO_PUB_KEY');
 
-        fn _validate_orders(
-            self: @ContractState,
-            order_1: Order,
-            order_2: Order,
-            actual_sell_amount: u128,
-            actual_buy_amount: u128,
-        ) { // TODO(Mohammad): Implement logic to validate the two orders.
-        // This should include checking that the orders are compatible and that the amounts match.
+            assert(order.sell_amount >= actual_sell_amount, 'INVALID_AMOUNT');
+            assert(order.buy_amount >= actual_buy_amount, 'INVALID_AMOUNT');
+
+            assert(order.sell_token.is_non_zero(), 'INVALID_ZERO_TOKEN');
+            assert(order.buy_token.is_non_zero(), 'INVALID_ZERO_TOKEN');
+            assert(order.sell_token != order.buy_token, 'INVALID_TOKEN_PAIR');
+
+            assert(
+                order.sell_amount * actual_buy_amount <= order.buy_amount * actual_sell_amount,
+                'INVALID_AMOUNT_RATIO',
+            );
+
+            let order_hash: HashType = Default::default();
+            assert(
+                self.fulfillment.entry(order_hash).read() + actual_sell_amount <= order.sell_amount,
+                'ORDER_ALREADY_FULFILLED',
+            );
+            // TODO(Mohammad): Implement order signature validation logic once Order hash is merged.
+
+            order_hash
         }
 
         fn _calculate_fee(self: @ContractState, amount: u128) -> u128 {
             let fee = self.fee.read();
-            // TODO(Mohammad): Implement fee calculation logic.
-            fee
+
+            mul_wide_and_ceil_div(amount, fee, MAX_BASIS_POINTS.into())
+                .expect('INVALID_ZERO_DIVISION')
         }
     }
 }
