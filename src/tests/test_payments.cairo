@@ -1,6 +1,8 @@
 use core::num::traits::Zero;
+use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use openzeppelin::utils::snip12::OffchainMessageHash;
 use snforge_std::cheatcodes::events::{EventSpyTrait, EventsFilterTrait};
+use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
 use snforge_std::{map_entry_address, store};
 use starknet::ContractAddress;
 use starknet_payments::errors;
@@ -8,7 +10,9 @@ use starknet_payments::interface::{
     IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
     IPaymentsSafeDispatcherTrait,
 };
+use starkware_utils::constants::MAX_U128;
 use starkware_utils::signature::stark::HashType;
+use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::constants as testing_constants;
 use starkware_utils_testing::test_utils::{
     assert_expected_event_emitted, assert_panic_with_error, assert_panic_with_felt_error,
@@ -305,3 +309,306 @@ fn test_failed_handle_order() {
     let result = dispatcher.cancel_orders(orders: array![default_order()].span());
     assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
 }
+
+#[test]
+fn test_successful_trade() {
+    // Setup:
+    let (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b) = test_setup(
+        initial_balance: constants::INITIAL_BALANCE,
+    );
+    let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
+
+    // Add tokens.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_b);
+
+    // Add users to allowlist.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b);
+
+    let order_a = Order {
+        salt: 1,
+        expiry: Timestamp { seconds: 100 },
+        user: user_a,
+        sell_token: token_a,
+        buy_token: token_b,
+        sell_amount: 10000,
+        buy_amount: 1000,
+        approved_counterparties: array![].span(),
+    };
+
+    let order_b = Order {
+        user: user_b,
+        sell_token: token_b,
+        buy_token: token_a,
+        sell_amount: 900,
+        buy_amount: 8000,
+        approved_counterparties: array![user_a].span(),
+        ..order_a,
+    };
+
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    // Approve tokens:
+    let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
+    cheat_caller_address_once(token_a, caller_address: user_a);
+    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
+    cheat_caller_address_once(token_b, caller_address: user_b);
+    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    // Test:
+    // 8000/900 <= 7560/850 <= 10000/1000
+    dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 7560,
+            order_a_actual_buy_amount: 850,
+        );
+
+    // Checks:
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 2440);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 7484);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 76);
+
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 841);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 9150);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 9);
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_event = events::TradeExecuted {
+        user_a,
+        user_b,
+        sell_token: token_a,
+        buy_token: token_b,
+        order_a_sell_amount: 7560,
+        order_a_buy_amount: 850,
+    };
+    assert_expected_event_emitted(
+        spied_event: events[4],
+        expected_event: expected_event,
+        expected_event_selector: @selector!("TradeExecuted"),
+        expected_event_name: "TradeExecuted",
+    );
+}
+
+#[test]
+fn test_successful_trade_large_numbers() {
+    // Setup:
+    let (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b) = test_setup(
+        initial_balance: MAX_U128.into(),
+    );
+    let dispatcher = IPaymentsDispatcher { contract_address };
+
+    // Add tokens.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_b);
+
+    // Add users to allowlist.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b);
+
+    let order_a = Order {
+        salt: 1,
+        expiry: Timestamp { seconds: 100 },
+        user: user_a,
+        sell_token: token_a,
+        buy_token: token_b,
+        sell_amount: MAX_U128,
+        buy_amount: MAX_U128,
+        approved_counterparties: array![user_b].span(),
+    };
+
+    let order_b = Order {
+        user: user_b,
+        sell_token: token_b,
+        buy_token: token_a,
+        sell_amount: MAX_U128,
+        buy_amount: MAX_U128,
+        approved_counterparties: array![user_a].span(),
+        ..order_a,
+    };
+
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    // Approve tokens:
+    let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
+    cheat_caller_address_once(token_a, caller_address: user_a);
+    token_a_dispatcher.approve(spender: contract_address, amount: MAX_U128.into());
+
+    let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
+    cheat_caller_address_once(token_b, caller_address: user_b);
+    token_b_dispatcher.approve(spender: contract_address, amount: MAX_U128.into());
+
+    // Test:
+    dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: MAX_U128,
+            order_a_actual_buy_amount: MAX_U128,
+        );
+
+    // Checks:
+    // Plus 1 for rounding up.
+    let fee: u256 = (MAX_U128 / 100 + 1).into();
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 0);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), MAX_U128.into() - fee);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), fee);
+
+    assert_eq!(token_b_dispatcher.balance_of(user_a), MAX_U128.into() - fee);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 0);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), fee);
+}
+
+#[test]
+fn test_successful_flow() {
+    // Setup:
+    let (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b) = test_setup(
+        initial_balance: constants::INITIAL_BALANCE,
+    );
+    let dispatcher = IPaymentsDispatcher { contract_address };
+
+    // Add tokens.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_b);
+
+    // Add users to allowlist.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a);
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b);
+
+    // Set fee:
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.set_fee(fee: 900); // 9%, in this case it would be rounded to 10%.
+
+    let order_a = Order {
+        salt: 1,
+        expiry: Timestamp { seconds: 100 },
+        user: user_a,
+        sell_token: token_a,
+        buy_token: token_b,
+        sell_amount: 100,
+        buy_amount: 10,
+        approved_counterparties: array![].span(),
+    };
+
+    let order_b = Order {
+        user: user_b,
+        sell_token: token_b,
+        buy_token: token_a,
+        sell_amount: 5,
+        buy_amount: 50,
+        approved_counterparties: array![user_a].span(),
+        ..order_a,
+    };
+
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    // Approve tokens:
+    let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
+    cheat_caller_address_once(token_a, caller_address: user_a);
+    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
+    cheat_caller_address_once(token_b, caller_address: user_b);
+    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    // Stage 1:
+
+    // Test:
+    dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 50,
+            order_a_actual_buy_amount: 5,
+        );
+
+    // Checks:
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 9950);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 45);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 5);
+
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 4);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 9995);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 1);
+
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 50);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 5);
+
+    // Stage 2:
+
+    let new_fee_recipient: ContractAddress = 'NEW_FEE_RECIPIENT'.try_into().unwrap();
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.set_fee_recipient(recipient: new_fee_recipient);
+
+    let order_b = Order { salt: 2, ..order_b };
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 50,
+            order_a_actual_buy_amount: 5,
+        );
+
+    // Checks:
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 9900);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 90);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 5);
+    assert_eq!(token_a_dispatcher.balance_of(new_fee_recipient), 5);
+
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 8);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 9990);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 1);
+    assert_eq!(token_b_dispatcher.balance_of(new_fee_recipient), 1);
+
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 100);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 5);
+}
+

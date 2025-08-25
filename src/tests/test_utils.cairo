@@ -15,6 +15,7 @@ pub mod constants {
     pub const FEE_LIMIT: u128 = 1000;
     pub const FEE_RECIPIENT: ContractAddress = 'FEE_RECIPIENT'.try_into().unwrap();
     pub const FEE: u128 = 100;
+    pub const INITIAL_BALANCE: u256 = 10_000;
 }
 
 fn deploy_contract() -> ContractAddress {
@@ -35,7 +36,9 @@ pub fn init_contract_with_roles() -> ContractAddress {
     contract_address
 }
 
-pub fn test_setup() -> (
+pub fn test_setup(
+    initial_balance: u256,
+) -> (
     ContractAddress,
     ContractAddress,
     ContractAddress,
@@ -59,8 +62,8 @@ pub fn test_setup() -> (
     let token_a = Token::STRK.contract_address();
     let token_b = Token::ETH.contract_address();
 
-    set_balance(user_a, 10_000, Token::STRK);
-    set_balance(user_b, 10_000, Token::ETH);
+    set_balance(user_a, initial_balance, Token::STRK);
+    set_balance(user_b, initial_balance, Token::ETH);
 
     (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b)
 }
