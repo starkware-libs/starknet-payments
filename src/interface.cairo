@@ -1,8 +1,6 @@
 use starknet::ContractAddress;
-use starkware_utils::signature::stark::HashType;
+use starkware_utils::signature::stark::{HashType, Signature};
 use crate::order::Order;
-
-pub type Signature = (felt252, felt252);
 
 #[derive(Copy, Drop, Debug, Serde, PartialEq, starknet::Store)]
 pub enum FulfilledStatus {
