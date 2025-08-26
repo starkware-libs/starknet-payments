@@ -9,7 +9,7 @@ use starkware_utils::time::time::Timestamp;
 pub struct Order {
     pub salt: felt252,
     pub expiry: Timestamp,
-    pub maker: ContractAddress,
+    pub owner: ContractAddress,
     pub public_key: PublicKey,
     pub sell_token: ContractAddress,
     pub buy_token: ContractAddress,
@@ -24,7 +24,7 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
         let Order {
             salt,
             expiry,
-            maker,
+            owner,
             public_key,
             sell_token,
             buy_token,
@@ -35,7 +35,7 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
         state = state
             .update_with(salt)
             .update_with(expiry)
-            .update_with(maker)
+            .update_with(owner)
             .update_with(public_key)
             .update_with(sell_token)
             .update_with(buy_token)
@@ -55,7 +55,7 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
 ///   "\"Order\"(
 ///    \"salt\":\"felt\",
 ///    \"expiry\":\"Timestamp\",
-///    \"maker\":\"ContractAddress\",
+///    \"owner\":\"ContractAddress\",
 ///    \"public_key\":\"PublicKey\",
 ///    \"sell_token\":\"ContractAddress\",
 ///    \"buy_token\":\"ContractAddress\",
@@ -68,7 +68,7 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
 ///    )
 /// );
 
-const ORDER_TYPE_HASH: HashType = 0x147c5ae17a3f6a3b61bad97ea79f2f662cb051293a68dc4de4f3d3f28ff3703;
+const ORDER_TYPE_HASH: HashType = 0x110a09f78c9cd3ca416d13d90e38007ba8bde2f44ae77b5fd037cb9bfb68117;
 
 impl StructHashImpl of StructHash<Order> {
     fn hash_struct(self: @Order) -> HashType {
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn test_order_type_hash() {
         let expected = selector!(
-            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"maker\":\"ContractAddress\",\"public_key\":\"PublicKey\",\"sell_token\":\"ContractAddress\",\"buy_token\":\"ContractAddress\",\"sell_amount\":\"u128\",\"buy_amount\":\"u128\",\"allowed_addresses\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
+            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"owner\":\"ContractAddress\",\"public_key\":\"PublicKey\",\"sell_token\":\"ContractAddress\",\"buy_token\":\"ContractAddress\",\"sell_amount\":\"u128\",\"buy_amount\":\"u128\",\"allowed_addresses\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
         );
         assert_eq!(ORDER_TYPE_HASH.into_base_16_string(), expected.into_base_16_string());
     }

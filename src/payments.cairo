@@ -17,12 +17,12 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
-    use starkware_utils::signature::stark::HashType;
+    use starkware_utils::signature::stark::{HashType, Signature};
     use crate::errors::{
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_ZERO_ADDRESS, ORDER_ALREADY_CANCELED,
         ORDER_WAS_FULFILLED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, TRANSFER_FAILED,
     };
-    use crate::interface::{FulfilledStatus, IPayments, Signature};
+    use crate::interface::{FulfilledStatus, IPayments};
     use crate::order::Order;
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -165,11 +165,11 @@ pub mod payments {
             let fee_1 = self._calculate_fee(actual_sell_amount);
             let fee_2 = self._calculate_fee(actual_buy_amount);
             assert(
-                sell_token.transfer_from(order_1.maker, fee_recipient, fee_1.into()),
+                sell_token.transfer_from(order_1.owner, fee_recipient, fee_1.into()),
                 TRANSFER_FAILED,
             );
             assert(
-                buy_token.transfer_from(order_2.maker, fee_recipient, fee_2.into()),
+                buy_token.transfer_from(order_2.owner, fee_recipient, fee_2.into()),
                 TRANSFER_FAILED,
             );
 
@@ -177,14 +177,14 @@ pub mod payments {
             assert(
                 sell_token
                     .transfer_from(
-                        order_1.maker, order_2.maker, (actual_sell_amount - fee_1).into(),
+                        order_1.owner, order_2.owner, (actual_sell_amount - fee_1).into(),
                     ),
                 TRANSFER_FAILED,
             );
             assert(
                 buy_token
                     .transfer_from(
-                        order_2.maker, order_1.maker, (actual_buy_amount - fee_2).into(),
+                        order_2.owner, order_1.owner, (actual_buy_amount - fee_2).into(),
                     ),
                 TRANSFER_FAILED,
             );
