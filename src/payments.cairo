@@ -25,6 +25,9 @@ pub mod payments {
         INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT_RATIO, INVALID_ZERO_TOKEN, ORDER_EXPIRED,
         TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, TRANSFER_FAILED, UNALLOWED_ADDRESS,
     };
+    use crate::events::{
+        OrderCanceled, SetFee, SetFeeLimit, SetFeeRecipient, TokenRegistered, TokenRemoved, Trade,
+    };
     use crate::interface::IPayments;
     use crate::order::Order;
     use crate::utils::{is_allowed_address, validate_signature};
@@ -98,6 +101,13 @@ pub mod payments {
         RolesEvent: RolesComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        SetFeeLimit: SetFeeLimit,
+        SetFee: SetFee,
+        SetFeeRecipient: SetFeeRecipient,
+        TokenRegistered: TokenRegistered,
+        TokenRemoved: TokenRemoved,
+        Trade: Trade,
+        OrderCanceled: OrderCanceled,
     }
 
 
@@ -220,6 +230,19 @@ pub mod payments {
                     ),
                 TRANSFER_FAILED,
             );
+
+            // Emit an event.
+            self
+                .emit(
+                    Trade {
+                        user_a: order_a.user,
+                        user_b: order_b.user,
+                        sell_token: order_a.sell_token,
+                        buy_token: order_a.buy_token,
+                        order_a_sell_amount: order_a_actual_sell_amount,
+                        order_a_buy_amount: order_a_actual_buy_amount,
+                    },
+                );
         }
 
         fn register_token(ref self: ContractState, token: ContractAddress) {
@@ -227,12 +250,18 @@ pub mod payments {
 
             assert(!self.is_token_registered(token), TOKEN_ALREADY_REGISTERED);
             self.tokens.write(token, true);
+
+            // Emit an event.
+            self.emit(TokenRegistered { token });
         }
         fn remove_token(ref self: ContractState, token: ContractAddress) {
             self.roles.only_app_governor();
 
             assert(self.is_token_registered(token), TOKEN_NOT_REGISTERED);
             self.tokens.write(token, false);
+
+            // Emit an event.
+            self.emit(TokenRemoved { token });
         }
         fn is_token_registered(self: @ContractState, token: ContractAddress) -> bool {
             assert(token.is_non_zero(), INVALID_ZERO_TOKEN);
@@ -253,17 +282,27 @@ pub mod payments {
             self.roles.only_app_governor();
 
             self._set_fee_limit(:fee_limit);
+
+            // Emit an event.
+            self.emit(SetFeeLimit { fee_limit });
         }
 
         fn set_fee(ref self: ContractState, fee: u128) {
             self.roles.only_operator();
 
             self._set_fee(:fee);
+
+            // Emit an event.
+            self.emit(SetFee { fee });
         }
         fn set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
             self.roles.only_operator();
+            let old_recipient = self.fee_recipient.read();
 
             self._set_fee_recipient(:recipient);
+
+            // Emit an event.
+            self.emit(SetFeeRecipient { old_recipient, new_recipient: recipient });
         }
 
         // Getters:
@@ -321,6 +360,9 @@ pub mod payments {
 
             // By setting the fulfillment to the full order amount, we prevent any future trades.
             self.fulfillment.write(order_hash, order.sell_amount);
+
+            // Emit an event.
+            self.emit(OrderCanceled { user: order.user, hash: order_hash });
         }
 
 

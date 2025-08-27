@@ -1,6 +1,7 @@
 use core::num::traits::Zero;
 use openzeppelin::utils::serde::SerializedAppend;
 use openzeppelin_testing::deployment::declare_and_deploy;
+use snforge_std::cheatcodes::events::{EventSpyTrait, EventsFilterTrait};
 use snforge_std::{map_entry_address, store};
 use starknet::ContractAddress;
 use starknet_payments::errors;
@@ -10,9 +11,11 @@ use starknet_payments::interface::{
 };
 use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::test_utils::{
-    assert_panic_with_error, assert_panic_with_felt_error, cheat_caller_address_once,
+    assert_expected_event_emitted, assert_panic_with_error, assert_panic_with_felt_error,
+    cheat_caller_address_once,
 };
 use starkware_utils_testing::{constants as testing_constants, test_utils};
+use crate::events;
 use crate::order::Order;
 
 pub mod constants {
@@ -58,6 +61,7 @@ fn default_order() -> Order {
 fn test_successful_register_token() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
 
     let token_a: ContractAddress = 'token_a'.try_into().unwrap();
     let token_b: ContractAddress = 'token_b'.try_into().unwrap();
@@ -81,6 +85,23 @@ fn test_successful_register_token() {
     dispatcher.remove_token(token: token_b);
     assert!(!dispatcher.is_token_registered(token: token_a));
     assert!(!dispatcher.is_token_registered(token: token_b));
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_register_token_event = events::TokenRegistered { token: token_a };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_register_token_event,
+        expected_event_selector: @selector!("TokenRegistered"),
+        expected_event_name: "TokenRegistered",
+    );
+    let expected_remove_token_event = events::TokenRemoved { token: token_b };
+    assert_expected_event_emitted(
+        spied_event: events[3],
+        expected_event: expected_remove_token_event,
+        expected_event_selector: @selector!("TokenRemoved"),
+        expected_event_name: "TokenRemoved",
+    );
 }
 
 #[test]
@@ -113,20 +134,50 @@ fn test_successful_set_fee() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
     let fee_recipient: ContractAddress = 'fee_recipient'.try_into().unwrap();
+    let mut spy = snforge_std::spy_events();
+
+    const NEW_FEE_LIMIT: u128 = 2000;
+    const NEW_FEE: u128 = 1500;
 
     assert!(dispatcher.get_fee() == constants::FEE);
     assert!(dispatcher.get_fee_recipient() == constants::FEE_RECIPIENT);
 
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
-    dispatcher.set_fee_limit(fee_limit: 2000);
+    dispatcher.set_fee_limit(fee_limit: NEW_FEE_LIMIT);
 
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
-    dispatcher.set_fee(fee: 1500);
+    dispatcher.set_fee(fee: NEW_FEE);
 
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
     dispatcher.set_fee_recipient(recipient: fee_recipient);
-    assert!(dispatcher.get_fee() == 1500);
+    assert!(dispatcher.get_fee() == NEW_FEE);
     assert!(dispatcher.get_fee_recipient() == fee_recipient);
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_set_fee_limit_event = events::SetFeeLimit { fee_limit: NEW_FEE_LIMIT };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_set_fee_limit_event,
+        expected_event_selector: @selector!("SetFeeLimit"),
+        expected_event_name: "SetFeeLimit",
+    );
+    let expected_remove_token_event = events::SetFee { fee: NEW_FEE };
+    assert_expected_event_emitted(
+        spied_event: events[1],
+        expected_event: expected_remove_token_event,
+        expected_event_selector: @selector!("SetFee"),
+        expected_event_name: "SetFee",
+    );
+    let expected_set_fee_recipient_event = events::SetFeeRecipient {
+        old_recipient: constants::FEE_RECIPIENT, new_recipient: fee_recipient,
+    };
+    assert_expected_event_emitted(
+        spied_event: events[2],
+        expected_event: expected_set_fee_recipient_event,
+        expected_event_selector: @selector!("SetFeeRecipient"),
+        expected_event_name: "SetFeeRecipient",
+    );
 }
 
 #[test]
@@ -163,6 +214,7 @@ fn test_failed_set_fee() {
 fn test_successful_handle_order() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
 
     let order_1 = Order { sell_amount: 10, ..default_order() };
     let order_2 = Order { salt: 2, sell_amount: 20, ..default_order() };
@@ -212,6 +264,18 @@ fn test_successful_handle_order() {
     assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[0])), 10);
     assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[1])), 11);
     assert_eq!(dispatcher.get_order_fulfillment(*(order_hashes[2])), 30);
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_event = events::OrderCanceled {
+        hash: *(order_hashes[0]), user: testing_constants::DUMMY_ADDRESS,
+    };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_event,
+        expected_event_selector: @selector!("OrderCanceled"),
+        expected_event_name: "OrderCanceled",
+    );
 }
 
 #[test]
