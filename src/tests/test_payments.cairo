@@ -109,14 +109,10 @@ fn test_successful_set_fee() {
     let fee_recipient: ContractAddress = 'fee_recipient'.try_into().unwrap();
     let mut spy = snforge_std::spy_events();
 
-    const NEW_FEE_LIMIT: u128 = 2000;
-    const NEW_FEE: u128 = 1500;
+    const NEW_FEE: u128 = 1000;
 
     assert!(dispatcher.get_fee() == constants::FEE);
     assert!(dispatcher.get_fee_recipient() == constants::FEE_RECIPIENT);
-
-    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
-    dispatcher.set_fee_limit(fee_limit: NEW_FEE_LIMIT);
 
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
     dispatcher.set_fee(fee: NEW_FEE);
@@ -128,16 +124,9 @@ fn test_successful_set_fee() {
 
     // Catch the events.
     let events = spy.get_events().emitted_by(contract_address).events;
-    let expected_set_fee_limit_event = events::FeeLimitSet { fee_limit: NEW_FEE_LIMIT };
-    assert_expected_event_emitted(
-        spied_event: events[0],
-        expected_event: expected_set_fee_limit_event,
-        expected_event_selector: @selector!("FeeLimitSet"),
-        expected_event_name: "FeeLimitSet",
-    );
     let expected_remove_token_event = events::FeeSet { fee: NEW_FEE };
     assert_expected_event_emitted(
-        spied_event: events[1],
+        spied_event: events[0],
         expected_event: expected_remove_token_event,
         expected_event_selector: @selector!("FeeSet"),
         expected_event_name: "FeeSet",
@@ -146,7 +135,7 @@ fn test_successful_set_fee() {
         old_recipient: constants::FEE_RECIPIENT, new_recipient: fee_recipient,
     };
     assert_expected_event_emitted(
-        spied_event: events[2],
+        spied_event: events[1],
         expected_event: expected_set_fee_recipient_event,
         expected_event_selector: @selector!("FeeRecipientSet"),
         expected_event_name: "FeeRecipientSet",
@@ -159,9 +148,6 @@ fn test_failed_set_fee() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsSafeDispatcher { contract_address };
     let fee_recipient: ContractAddress = 'fee_recipient'.try_into().unwrap();
-
-    let result = dispatcher.set_fee_limit(fee_limit: 10000);
-    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
 
     let result = dispatcher.set_fee(fee: 1000);
     assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
@@ -176,10 +162,6 @@ fn test_failed_set_fee() {
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
     let result = dispatcher.set_fee(fee: 1001);
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_HIGH_FEE);
-
-    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
-    let result = dispatcher.set_fee_limit(fee_limit: 10001);
-    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_HIGH_FEE_LIMIT);
 }
 
 
