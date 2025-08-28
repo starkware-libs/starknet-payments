@@ -269,6 +269,7 @@ pub mod payments {
             // Emit an event.
             self.emit(TokenRegistered { token });
         }
+
         fn remove_token(ref self: ContractState, token: ContractAddress) {
             self.roles.only_app_governor();
 
@@ -277,10 +278,6 @@ pub mod payments {
 
             // Emit an event.
             self.emit(TokenRemoved { token });
-        }
-        fn is_token_registered(self: @ContractState, token: ContractAddress) -> bool {
-            assert(token.is_non_zero(), INVALID_ZERO_TOKEN);
-            self.tokens.read(token)
         }
 
         fn cancel_orders(ref self: ContractState, orders: Span<Order>) {
@@ -309,11 +306,18 @@ pub mod payments {
         fn get_fee_limit(self: @ContractState) -> u128 {
             self.fee_limit.read()
         }
+
         fn get_fee(self: @ContractState) -> u128 {
             self.fee.read()
         }
+
         fn get_fee_recipient(self: @ContractState) -> ContractAddress {
             self.fee_recipient.read()
+        }
+
+        fn is_token_registered(self: @ContractState, token: ContractAddress) -> bool {
+            assert(token.is_non_zero(), INVALID_ZERO_TOKEN);
+            self.tokens.read(token)
         }
 
         fn get_order_fulfillment(self: @ContractState, order_hash: HashType) -> u128 {

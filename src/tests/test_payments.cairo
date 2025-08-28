@@ -9,7 +9,6 @@ use starknet_payments::interface::{
     IPaymentsSafeDispatcherTrait,
 };
 use starkware_utils::signature::stark::HashType;
-use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::constants as testing_constants;
 use starkware_utils_testing::test_utils::{
     assert_expected_event_emitted, assert_panic_with_error, assert_panic_with_felt_error,
@@ -19,19 +18,6 @@ use crate::events;
 use crate::order::Order;
 use crate::payments::payments::SNIP12MetadataImpl;
 use crate::tests::test_utils::*;
-
-fn default_order() -> Order {
-    Order {
-        salt: 0,
-        expiry: Timestamp { seconds: 0 },
-        user: testing_constants::DUMMY_ADDRESS,
-        sell_token: testing_constants::DUMMY_ADDRESS,
-        buy_token: testing_constants::DUMMY_ADDRESS,
-        sell_amount: 100,
-        buy_amount: 200,
-        approved_counterparties: array![].span(),
-    }
-}
 
 #[test]
 fn test_successful_register_token() {

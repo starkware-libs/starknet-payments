@@ -1,4 +1,5 @@
 use starknet::ContractAddress;
+use starkware_utils::signature::stark::HashType;
 
 #[derive(Debug, Drop, PartialEq, starknet::Event)]
 pub struct FeeSet {
@@ -44,5 +45,5 @@ pub struct OrderCanceled {
     #[key]
     pub user: ContractAddress,
     #[key]
-    pub hash: felt252,
+    pub hash: HashType,
 }
