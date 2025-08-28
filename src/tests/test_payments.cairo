@@ -1,6 +1,4 @@
 use core::num::traits::Zero;
-use openzeppelin::utils::serde::SerializedAppend;
-use openzeppelin_testing::deployment::declare_and_deploy;
 use snforge_std::cheatcodes::events::{EventSpyTrait, EventsFilterTrait};
 use snforge_std::{map_entry_address, store};
 use starknet::ContractAddress;
@@ -10,39 +8,14 @@ use starknet_payments::interface::{
     IPaymentsSafeDispatcherTrait,
 };
 use starkware_utils::time::time::Timestamp;
+use starkware_utils_testing::constants as testing_constants;
 use starkware_utils_testing::test_utils::{
     assert_expected_event_emitted, assert_panic_with_error, assert_panic_with_felt_error,
     cheat_caller_address_once,
 };
-use starkware_utils_testing::{constants as testing_constants, test_utils};
 use crate::events;
 use crate::order::Order;
-
-pub mod constants {
-    use super::*;
-    pub const UPGRADE_DELAY: u64 = 0;
-    pub const FEE_LIMIT: u128 = 1000;
-    pub const FEE_RECIPIENT: ContractAddress = 'FEE_RECIPIENT'.try_into().unwrap();
-    pub const FEE: u128 = 0;
-}
-
-fn deploy_contract() -> ContractAddress {
-    let mut calldata = array![];
-    calldata.append_serde(testing_constants::GOVERNANCE_ADMIN);
-    calldata.append_serde(constants::UPGRADE_DELAY);
-    calldata.append_serde(constants::FEE_LIMIT);
-    calldata.append_serde(constants::FEE_RECIPIENT);
-    calldata.append_serde(constants::FEE);
-    declare_and_deploy("payments", calldata)
-}
-
-pub fn init_contract_with_roles() -> ContractAddress {
-    let contract_address = deploy_contract();
-    test_utils::set_default_roles(
-        contract: contract_address, governance_admin: testing_constants::GOVERNANCE_ADMIN,
-    );
-    contract_address
-}
+use crate::tests::test_utils::*;
 
 fn default_order() -> Order {
     Order {
