@@ -4,7 +4,9 @@ use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSigne
 use snforge_std::signature::{KeyPair, KeyPairTrait};
 use snforge_std::{Token, TokenImpl, TokenTrait, set_balance};
 use starknet::ContractAddress;
+use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::{constants as testing_constants, test_utils};
+use crate::order::Order;
 use crate::payments::payments::SNIP12MetadataImpl;
 
 pub mod constants {
@@ -61,4 +63,17 @@ pub fn test_setup() -> (
     set_balance(user_b, 10_000, Token::ETH);
 
     (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b)
+}
+
+pub fn default_order() -> Order {
+    Order {
+        salt: 0,
+        expiry: Timestamp { seconds: 0 },
+        user: testing_constants::DUMMY_ADDRESS,
+        sell_token: testing_constants::DUMMY_ADDRESS,
+        buy_token: testing_constants::DUMMY_ADDRESS,
+        sell_amount: 100,
+        buy_amount: 200,
+        allowed_addresses: array![].span(),
+    }
 }

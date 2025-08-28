@@ -1,11 +1,6 @@
 use starknet::ContractAddress;
 
 #[derive(Debug, Drop, PartialEq, starknet::Event)]
-pub struct FeeLimitSet {
-    pub fee_limit: u128,
-}
-
-#[derive(Debug, Drop, PartialEq, starknet::Event)]
 pub struct FeeSet {
     pub fee: u128,
 }
