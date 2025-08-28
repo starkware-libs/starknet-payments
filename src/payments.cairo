@@ -27,8 +27,7 @@ pub mod payments {
         TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, UNALLOWED_ADDRESS, transfer_failed_error,
     };
     use crate::events::{
-        FeeLimitSet, FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered, TokenRemoved,
-        TradeExecuted,
+        FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered, TokenRemoved, TradeExecuted,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
@@ -103,7 +102,6 @@ pub mod payments {
         RolesEvent: RolesComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
-        FeeLimitSet: FeeLimitSet,
         FeeSet: FeeSet,
         FeeRecipientSet: FeeRecipientSet,
         TokenRegistered: TokenRegistered,
@@ -125,7 +123,8 @@ pub mod payments {
         self.roles.initialize(:governance_admin);
         self.replaceability.initialize(:upgrade_delay);
 
-        self._set_fee_limit(:fee_limit);
+        assert(fee_limit <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE_LIMIT);
+        self.fee_limit.write(fee_limit);
         self._set_fee_recipient(recipient: fee_recipient);
         self._set_fee(:fee);
     }
@@ -293,12 +292,6 @@ pub mod payments {
 
         // Setters:
 
-        fn set_fee_limit(ref self: ContractState, fee_limit: u128) {
-            self.roles.only_app_governor();
-
-            self._set_fee_limit(:fee_limit);
-        }
-
         fn set_fee(ref self: ContractState, fee: u128) {
             self.roles.only_operator();
 
@@ -331,14 +324,6 @@ pub mod payments {
     // Internal methods
     #[generate_trait]
     pub impl ImplInternalPayments of InternalPaymentsTrait {
-        fn _set_fee_limit(ref self: ContractState, fee_limit: u128) {
-            assert(fee_limit <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE_LIMIT);
-            self.fee_limit.write(fee_limit);
-
-            // Emit an event.
-            self.emit(FeeLimitSet { fee_limit });
-        }
-
         fn _set_fee(ref self: ContractState, fee: u128) {
             assert(fee <= self.fee_limit.read(), INVALID_HIGH_FEE);
             self.fee.write(fee);

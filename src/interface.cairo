@@ -22,7 +22,6 @@ pub trait IPayments<TContractState> {
 
     // Setters:
 
-    fn set_fee_limit(ref self: TContractState, fee_limit: u128);
     fn set_fee(ref self: TContractState, fee: u128);
     fn set_fee_recipient(ref self: TContractState, recipient: ContractAddress);
 
