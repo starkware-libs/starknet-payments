@@ -16,14 +16,19 @@ pub mod payments {
     use starkware_utils::components::replaceability::ReplaceabilityComponent::InternalReplaceabilityTrait;
     use starkware_utils::components::roles::RolesComponent;
     use starkware_utils::components::roles::RolesComponent::InternalTrait as RolesInternal;
+    use starkware_utils::errors::assert_with_byte_array;
     use starkware_utils::math::utils::mul_wide_and_ceil_div;
     use starkware_utils::signature::stark::{HashType, Signature};
     use starkware_utils::time::time::Time;
     use crate::errors::{
         INVALID_AMOUNT_RATIO, INVALID_AMOUNT_TOO_LARGE, INVALID_DOWNCAST_AFTER_DIVISION,
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER,
-        INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT_RATIO, INVALID_ZERO_TOKEN, ORDER_EXPIRED,
-        TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, TRANSFER_FAILED, UNALLOWED_ADDRESS,
+        INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT, INVALID_ZERO_TOKEN, ORDER_EXPIRED,
+        TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, UNALLOWED_ADDRESS, transfer_failed_error,
+    };
+    use crate::events::{
+        FeeLimitSet, FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered, TokenRemoved,
+        TradeExecuted,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
@@ -98,6 +103,13 @@ pub mod payments {
         RolesEvent: RolesComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        FeeLimitSet: FeeLimitSet,
+        FeeSet: FeeSet,
+        FeeRecipientSet: FeeRecipientSet,
+        TokenRegistered: TokenRegistered,
+        TokenRemoved: TokenRemoved,
+        TradeExecuted: TradeExecuted,
+        OrderCanceled: OrderCanceled,
     }
 
 
@@ -197,29 +209,55 @@ pub mod payments {
             let fee_1 = self._calculate_fee(order_a_actual_sell_amount);
             // For `order_b`, the actual sold amount is `order_a_actual_buy_amount`.
             let fee_2 = self._calculate_fee(order_a_actual_buy_amount);
-            assert(
+            assert_with_byte_array(
                 sell_token.transfer_from(order_a.user, fee_recipient, fee_1.into()),
-                TRANSFER_FAILED,
+                transfer_failed_error(
+                    token: order_a.sell_token, sender: order_a.user, amount: fee_1,
+                ),
             );
-            assert(
-                buy_token.transfer_from(order_b.user, fee_recipient, fee_2.into()), TRANSFER_FAILED,
+            assert_with_byte_array(
+                buy_token.transfer_from(order_b.user, fee_recipient, fee_2.into()),
+                transfer_failed_error(
+                    token: order_a.buy_token, sender: order_b.user, amount: fee_2,
+                ),
             );
 
             // Transfer the actual amounts.
-            assert(
+            assert_with_byte_array(
                 sell_token
                     .transfer_from(
                         order_a.user, order_b.user, (order_a_actual_sell_amount - fee_1).into(),
                     ),
-                TRANSFER_FAILED,
+                transfer_failed_error(
+                    token: order_a.sell_token,
+                    sender: order_a.user,
+                    amount: order_a_actual_sell_amount - fee_1,
+                ),
             );
-            assert(
+            assert_with_byte_array(
                 buy_token
                     .transfer_from(
                         order_b.user, order_a.user, (order_a_actual_buy_amount - fee_2).into(),
                     ),
-                TRANSFER_FAILED,
+                transfer_failed_error(
+                    token: order_a.buy_token,
+                    sender: order_b.user,
+                    amount: order_a_actual_buy_amount - fee_2,
+                ),
             );
+
+            // Emit an event.
+            self
+                .emit(
+                    TradeExecuted {
+                        user_a: order_a.user,
+                        user_b: order_b.user,
+                        sell_token: order_a.sell_token,
+                        buy_token: order_a.buy_token,
+                        order_a_sell_amount: order_a_actual_sell_amount,
+                        order_a_buy_amount: order_a_actual_buy_amount,
+                    },
+                );
         }
 
         fn register_token(ref self: ContractState, token: ContractAddress) {
@@ -227,12 +265,18 @@ pub mod payments {
 
             assert(!self.is_token_registered(token), TOKEN_ALREADY_REGISTERED);
             self.tokens.write(token, true);
+
+            // Emit an event.
+            self.emit(TokenRegistered { token });
         }
         fn remove_token(ref self: ContractState, token: ContractAddress) {
             self.roles.only_app_governor();
 
             assert(self.is_token_registered(token), TOKEN_NOT_REGISTERED);
             self.tokens.write(token, false);
+
+            // Emit an event.
+            self.emit(TokenRemoved { token });
         }
         fn is_token_registered(self: @ContractState, token: ContractAddress) -> bool {
             assert(token.is_non_zero(), INVALID_ZERO_TOKEN);
@@ -290,16 +334,26 @@ pub mod payments {
         fn _set_fee_limit(ref self: ContractState, fee_limit: u128) {
             assert(fee_limit <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE_LIMIT);
             self.fee_limit.write(fee_limit);
+
+            // Emit an event.
+            self.emit(FeeLimitSet { fee_limit });
         }
 
         fn _set_fee(ref self: ContractState, fee: u128) {
             assert(fee <= self.fee_limit.read(), INVALID_HIGH_FEE);
             self.fee.write(fee);
+
+            // Emit an event.
+            self.emit(FeeSet { fee });
         }
 
         fn _set_fee_recipient(ref self: ContractState, recipient: ContractAddress) {
             assert(recipient.is_non_zero(), INVALID_ZERO_ADDRESS);
+            let old_recipient = self.fee_recipient.read();
             self.fee_recipient.write(recipient);
+
+            // Emit an event.
+            self.emit(FeeRecipientSet { old_recipient, new_recipient: recipient });
         }
 
         fn _apply_fulfillment(
@@ -321,6 +375,9 @@ pub mod payments {
 
             // By setting the fulfillment to the full order amount, we prevent any future trades.
             self.fulfillment.write(order_hash, order.sell_amount);
+
+            // Emit an event.
+            self.emit(OrderCanceled { user: order.user, hash: order_hash });
         }
 
 
@@ -330,8 +387,8 @@ pub mod payments {
             assert(order.expiry >= Time::now(), ORDER_EXPIRED);
             assert(order.user.is_non_zero(), INVALID_ZERO_ADDRESS);
 
-            assert(order.sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT_RATIO);
-            assert(order.buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT_RATIO);
+            assert(order.sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
+            assert(order.buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
 
             assert(order.sell_token != order.buy_token, INVALID_TOKEN_PAIR);
         }
@@ -390,8 +447,8 @@ pub mod payments {
                 INVALID_AMOUNT_RATIO,
             );
 
-            assert(order_a_actual_sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT_RATIO);
-            assert(order_a_actual_buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT_RATIO);
+            assert(order_a_actual_sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
+            assert(order_a_actual_buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
 
             // Validate allowed addresses.
             assert(is_allowed_address(order_b.user, order_a.allowed_addresses), UNALLOWED_ADDRESS);
