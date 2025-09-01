@@ -103,6 +103,78 @@ fn test_failed_register_token() {
 }
 
 #[test]
+fn test_successful_address_whitelist() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
+
+    let user_a: ContractAddress = 'user_a'.try_into().unwrap();
+    let user_b: ContractAddress = 'user_b'.try_into().unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.whitelist_address(address: user_a);
+    assert!(dispatcher.is_whitelisted(address: user_a));
+    assert!(!dispatcher.is_whitelisted(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.whitelist_address(address: user_b);
+    assert!(dispatcher.is_whitelisted(address: user_a));
+    assert!(dispatcher.is_whitelisted(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.remove_from_whitelist(address: user_a);
+    assert!(!dispatcher.is_whitelisted(address: user_a));
+    assert!(dispatcher.is_whitelisted(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.remove_from_whitelist(address: user_b);
+    assert!(!dispatcher.is_whitelisted(address: user_a));
+    assert!(!dispatcher.is_whitelisted(address: user_b));
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_register_token_event = events::AddressWhitelisted { address: user_a };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_register_token_event,
+        expected_event_selector: @selector!("AddressWhitelisted"),
+        expected_event_name: "AddressWhitelisted",
+    );
+    let expected_remove_token_event = events::AddressRemovedFromWhitelist { address: user_b };
+    assert_expected_event_emitted(
+        spied_event: events[3],
+        expected_event: expected_remove_token_event,
+        expected_event_selector: @selector!("AddressRemovedFromWhitelist"),
+        expected_event_name: "AddressRemovedFromWhitelist",
+    );
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_address_whitelist() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+    let user: ContractAddress = 'user'.try_into().unwrap();
+
+    let result = dispatcher.remove_from_whitelist(address: user);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    let result = dispatcher.whitelist_address(address: user);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.remove_from_whitelist(address: user);
+    assert_panic_with_felt_error(:result, expected_error: errors::ADDRESS_NOT_WHITELISTED);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.whitelist_address(address: user).unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.whitelist_address(address: user);
+    assert_panic_with_felt_error(:result, expected_error: errors::ADDRESS_ALREADY_WHITELISTED);
+}
+
+#[test]
 fn test_successful_set_fee() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
