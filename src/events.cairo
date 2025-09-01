@@ -27,6 +27,18 @@ pub struct TokenRemoved {
 }
 
 #[derive(Debug, Drop, PartialEq, starknet::Event)]
+pub struct AddressAllowed {
+    #[key]
+    pub address: ContractAddress,
+}
+
+#[derive(Debug, Drop, PartialEq, starknet::Event)]
+pub struct AddressDisallowed {
+    #[key]
+    pub address: ContractAddress,
+}
+
+#[derive(Debug, Drop, PartialEq, starknet::Event)]
 pub struct TradeExecuted {
     #[key]
     pub user_a: ContractAddress,

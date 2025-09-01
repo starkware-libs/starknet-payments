@@ -21,14 +21,15 @@ pub mod payments {
     use starkware_utils::signature::stark::{HashType, Signature};
     use starkware_utils::time::time::Time;
     use crate::errors::{
-        INVALID_AMOUNT_RATIO, INVALID_AMOUNT_TOO_LARGE, INVALID_DOWNCAST_AFTER_DIVISION,
-        INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER,
-        INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT, INVALID_ZERO_TOKEN, ORDER_EXPIRED,
-        TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, UNAPPROVED_COUNTERPARTY,
-        transfer_failed_error,
+        ADDRESS_ALREADY_ALLOWED, INVALID_AMOUNT_RATIO, INVALID_AMOUNT_TOO_LARGE,
+        INVALID_DOWNCAST_AFTER_DIVISION, INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT,
+        INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER, INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT,
+        INVALID_ZERO_TOKEN, ORDER_EXPIRED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
+        UNALLOWED_ADDRESS, UNAPPROVED_COUNTERPARTY, transfer_failed_error,
     };
     use crate::events::{
-        FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered, TokenRemoved, TradeExecuted,
+        AddressAllowed, AddressDisallowed, FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered,
+        TokenRemoved, TradeExecuted,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
@@ -86,6 +87,8 @@ pub mod payments {
         fee: u128,
         // Whitelisted tokens.
         tokens: Map<ContractAddress, bool>,
+        // Allowed addresses.
+        allowlist: Map<ContractAddress, bool>,
         // Order hash to fulfilled sell amount.
         fulfillment: Map<HashType, u128>,
     }
@@ -107,6 +110,8 @@ pub mod payments {
         FeeRecipientSet: FeeRecipientSet,
         TokenRegistered: TokenRegistered,
         TokenRemoved: TokenRemoved,
+        AddressAllowed: AddressAllowed,
+        AddressDisallowed: AddressDisallowed,
         TradeExecuted: TradeExecuted,
         OrderCanceled: OrderCanceled,
     }
@@ -280,6 +285,35 @@ pub mod payments {
             self.emit(TokenRemoved { token });
         }
 
+        // These functions are used by the contract to control who is allowed to take part in order
+        // matching and settlement. Only allowed addresses are permitted to trade.
+
+        fn add_to_allowlist(ref self: ContractState, address: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(!self.is_allowed(address), ADDRESS_ALREADY_ALLOWED);
+            self.allowlist.write(address, true);
+
+            // Emit an event.
+            self.emit(AddressAllowed { address });
+        }
+
+        fn remove_from_allowlist(ref self: ContractState, address: ContractAddress) {
+            self.roles.only_app_governor();
+
+            assert(self.is_allowed(address), UNALLOWED_ADDRESS);
+            self.allowlist.write(address, false);
+
+            // Emit an event.
+            self.emit(AddressDisallowed { address });
+        }
+
+        fn is_allowed(self: @ContractState, address: ContractAddress) -> bool {
+            assert(address.is_non_zero(), INVALID_ZERO_ADDRESS);
+            self.allowlist.read(address)
+        }
+
+
         fn cancel_orders(ref self: ContractState, orders: Span<Order>) {
             self.roles.only_operator();
 
@@ -375,7 +409,7 @@ pub mod payments {
         /// amounts.
         fn _validate_order(self: @ContractState, order: Order) {
             assert(order.expiry >= Time::now(), ORDER_EXPIRED);
-            assert(order.user.is_non_zero(), INVALID_ZERO_ADDRESS);
+            assert(self.is_allowed(order.user), UNALLOWED_ADDRESS);
 
             assert(order.sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
             assert(order.buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT);

@@ -92,6 +92,78 @@ fn test_failed_register_token() {
 }
 
 #[test]
+fn test_successful_address_allowlist() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
+
+    let user_a: ContractAddress = 'user_a'.try_into().unwrap();
+    let user_b: ContractAddress = 'user_b'.try_into().unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a);
+    assert!(dispatcher.is_allowed(address: user_a));
+    assert!(!dispatcher.is_allowed(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b);
+    assert!(dispatcher.is_allowed(address: user_a));
+    assert!(dispatcher.is_allowed(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.remove_from_allowlist(address: user_a);
+    assert!(!dispatcher.is_allowed(address: user_a));
+    assert!(dispatcher.is_allowed(address: user_b));
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.remove_from_allowlist(address: user_b);
+    assert!(!dispatcher.is_allowed(address: user_a));
+    assert!(!dispatcher.is_allowed(address: user_b));
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_register_token_event = events::AddressAllowed { address: user_a };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_register_token_event,
+        expected_event_selector: @selector!("AddressAllowed"),
+        expected_event_name: "AddressAllowed",
+    );
+    let expected_remove_token_event = events::AddressDisallowed { address: user_b };
+    assert_expected_event_emitted(
+        spied_event: events[3],
+        expected_event: expected_remove_token_event,
+        expected_event_selector: @selector!("AddressDisallowed"),
+        expected_event_name: "AddressDisallowed",
+    );
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_address_allowlist() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+    let user: ContractAddress = 'user'.try_into().unwrap();
+
+    let result = dispatcher.remove_from_allowlist(address: user);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    let result = dispatcher.add_to_allowlist(address: user);
+    assert_panic_with_error(:result, expected_error: "ONLY_APP_GOVERNOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.remove_from_allowlist(address: user);
+    assert_panic_with_felt_error(:result, expected_error: errors::UNALLOWED_ADDRESS);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user).unwrap();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    let result = dispatcher.add_to_allowlist(address: user);
+    assert_panic_with_felt_error(:result, expected_error: errors::ADDRESS_ALREADY_ALLOWED);
+}
+
+#[test]
 fn test_successful_set_fee() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
