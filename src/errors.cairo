@@ -14,7 +14,7 @@ pub const INVALID_ZERO_TOKEN: felt252 = 'INVALID_ZERO_TOKEN';
 pub const ORDER_EXPIRED: felt252 = 'ORDER_EXPIRED';
 pub const TOKEN_ALREADY_REGISTERED: felt252 = 'TOKEN_ALREADY_REGISTERED';
 pub const TOKEN_NOT_REGISTERED: felt252 = 'TOKEN_NOT_REGISTERED';
-pub const UNALLOWED_ADDRESS: felt252 = 'UNALLOWED_ADDRESS';
+pub const UNAPPROVED_COUNTERPARTY: felt252 = 'UNAPPROVED_COUNTERPARTY';
 
 pub fn transfer_failed_error(
     token: ContractAddress, sender: ContractAddress, amount: u128,
