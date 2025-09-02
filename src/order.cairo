@@ -15,13 +15,20 @@ pub struct Order {
     pub sell_amount: u128,
     pub buy_amount: u128,
     // Addresses the user is willing to trade with. Empty span means any address.
-    pub allowed_addresses: Span<ContractAddress>,
+    pub approved_counterparties: Span<ContractAddress>,
 }
 
 pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
     fn update_state(mut state: S, value: Order) -> S {
         let Order {
-            salt, expiry, user, sell_token, buy_token, sell_amount, buy_amount, allowed_addresses,
+            salt,
+            expiry,
+            user,
+            sell_token,
+            buy_token,
+            sell_amount,
+            buy_amount,
+            approved_counterparties,
         } = value;
         state = state
             .update_with(salt)
@@ -31,8 +38,8 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
             .update_with(buy_token)
             .update_with(sell_amount)
             .update_with(buy_amount)
-            .update_with(allowed_addresses.len());
-        for elem in allowed_addresses {
+            .update_with(approved_counterparties.len());
+        for elem in approved_counterparties {
             state = state.update_with(*elem);
         }
 
@@ -50,14 +57,14 @@ pub impl HashOrderImpl<S, +HashStateTrait<S>, +Drop<S>> of Hash<Order, S> {
 ///    \"buy_token\":\"ContractAddress\",
 ///    \"sell_amount\":\"u128\",
 ///    \"buy_amount\":\"u128\",
-///    \"allowed_addresses\":\"Span<ContractAddress>\"
+///    \"approved_counterparties\":\"Span<ContractAddress>\"
 ///    )
 ///    \"Timestamp\"(
 ///    \"seconds\":\"u64\"
 ///    )
 /// );
 
-const ORDER_TYPE_HASH: HashType = 0x2d9dc4d67a6cc048d96cd39c037575fa17fc4f4ba67fa9307cd08d3aac3943b;
+const ORDER_TYPE_HASH: HashType = 0x211c45dbc2e66ee156228a18612613a79470506142cea568b05e981a74efbb;
 
 impl StructHashImpl of StructHash<Order> {
     fn hash_struct(self: @Order) -> HashType {
@@ -74,7 +81,7 @@ mod tests {
     #[test]
     fn test_order_type_hash() {
         let expected = selector!(
-            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"user\":\"ContractAddress\",\"sell_token\":\"ContractAddress\",\"buy_token\":\"ContractAddress\",\"sell_amount\":\"u128\",\"buy_amount\":\"u128\",\"allowed_addresses\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
+            "\"Order\"(\"salt\":\"felt\",\"expiry\":\"Timestamp\",\"user\":\"ContractAddress\",\"sell_token\":\"ContractAddress\",\"buy_token\":\"ContractAddress\",\"sell_amount\":\"u128\",\"buy_amount\":\"u128\",\"approved_counterparties\":\"Span<ContractAddress>\")\"Timestamp\"(\"seconds\":\"u64\")",
         );
         assert_eq!(ORDER_TYPE_HASH.into_base_16_string(), expected.into_base_16_string());
     }

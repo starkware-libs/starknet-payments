@@ -24,14 +24,15 @@ pub mod payments {
         INVALID_AMOUNT_RATIO, INVALID_AMOUNT_TOO_LARGE, INVALID_DOWNCAST_AFTER_DIVISION,
         INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT, INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER,
         INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT, INVALID_ZERO_TOKEN, ORDER_EXPIRED,
-        TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, UNALLOWED_ADDRESS, transfer_failed_error,
+        TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED, UNAPPROVED_COUNTERPARTY,
+        transfer_failed_error,
     };
     use crate::events::{
         FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered, TokenRemoved, TradeExecuted,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
-    use crate::utils::{is_allowed_address, validate_signature};
+    use crate::utils::{is_approved_counterparty, validate_signature};
 
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
@@ -435,9 +436,15 @@ pub mod payments {
             assert(order_a_actual_sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
             assert(order_a_actual_buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
 
-            // Validate allowed addresses.
-            assert(is_allowed_address(order_b.user, order_a.allowed_addresses), UNALLOWED_ADDRESS);
-            assert(is_allowed_address(order_a.user, order_b.allowed_addresses), UNALLOWED_ADDRESS);
+            // Validate approved counterparties.
+            assert(
+                is_approved_counterparty(order_b.user, order_a.approved_counterparties),
+                UNAPPROVED_COUNTERPARTY,
+            );
+            assert(
+                is_approved_counterparty(order_a.user, order_b.approved_counterparties),
+                UNAPPROVED_COUNTERPARTY,
+            );
         }
 
 

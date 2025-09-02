@@ -13,15 +13,15 @@ fn is_in_span(tested_address: ContractAddress, address_list: Span<ContractAddres
     false
 }
 
-pub fn is_allowed_address(
-    tested_address: ContractAddress, allowed_addresses: Span<ContractAddress>,
+pub fn is_approved_counterparty(
+    tested_address: ContractAddress, approved_counterparties: Span<ContractAddress>,
 ) -> bool {
-    // Means all addresses are allowed.
-    if allowed_addresses.len() == 0 {
+    // Means all addresses are approved.
+    if approved_counterparties.len() == 0 {
         return true;
     }
 
-    is_in_span(tested_address, allowed_addresses)
+    is_in_span(tested_address, approved_counterparties)
 }
 
 pub fn validate_signature(signer: ContractAddress, hash: felt252, signature: Span<felt252>) {
