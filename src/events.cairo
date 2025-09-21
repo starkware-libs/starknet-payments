@@ -50,6 +50,8 @@ pub struct TradeExecuted {
     pub buy_token: ContractAddress,
     pub order_a_sell_amount: u128,
     pub order_a_buy_amount: u128,
+    pub fee_a: u128,
+    pub fee_b: u128,
 }
 
 #[derive(Debug, Drop, PartialEq, starknet::Event)]
