@@ -1,14 +1,20 @@
 use core::num::traits::Zero;
+use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use openzeppelin::utils::snip12::OffchainMessageHash;
 use snforge_std::cheatcodes::events::{EventSpyTrait, EventsFilterTrait};
-use snforge_std::{map_entry_address, store};
+use snforge_std::signature::stark_curve::{StarkCurveKeyPairImpl, StarkCurveSignerImpl};
+use snforge_std::{map_entry_address, start_cheat_block_timestamp_global, store};
 use starknet::ContractAddress;
 use starknet_payments::errors;
 use starknet_payments::interface::{
     IPaymentsDispatcher, IPaymentsDispatcherTrait, IPaymentsSafeDispatcher,
     IPaymentsSafeDispatcherTrait,
 };
+use starkware_utils::components::pausable::interface::{
+    IPausableDispatcher, IPausableDispatcherTrait,
+};
 use starkware_utils::signature::stark::HashType;
+use starkware_utils::time::time::Timestamp;
 use starkware_utils_testing::constants as testing_constants;
 use starkware_utils_testing::test_utils::{
     assert_expected_event_emitted, assert_panic_with_error, assert_panic_with_felt_error,
@@ -304,4 +310,440 @@ fn test_failed_handle_order() {
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::DUMMY_ADDRESS);
     let result = dispatcher.cancel_orders(orders: array![default_order()].span());
     assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
+}
+
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_invalid_orders() {
+    // Setup:
+
+    let (contract_address, token_a, token_b, user_a, user_b, _, _) = test_setup();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+
+    // Add tokens.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_a).unwrap();
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_b).unwrap();
+
+    let dummy_user: ContractAddress = Zero::zero();
+    let dummy_token: ContractAddress = Zero::zero();
+    let unregistered_token: ContractAddress = 'UNREGISTERED_TOKEN'.try_into().unwrap();
+    let empty_signature = array![].span();
+
+    let order_a = Order {
+        salt: 1,
+        expiry: Timestamp { seconds: 100 },
+        user: user_a,
+        sell_token: token_a,
+        buy_token: token_b,
+        sell_amount: 100,
+        buy_amount: 1,
+        approved_counterparties: array![].span(),
+    };
+    let order_b = Order {
+        user: user_b,
+        sell_token: token_b,
+        buy_token: token_a,
+        sell_amount: 1,
+        buy_amount: 100,
+        approved_counterparties: array![user_a].span(),
+        ..order_a,
+    };
+
+    // Test scenario 1: Order with unallowed address.
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::UNALLOWED_ADDRESS);
+
+    // Add users to allowlist.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a).unwrap();
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b).unwrap();
+
+    // Test scenario 2: Order with same tokens.
+
+    let order_a = Order { buy_token: token_a, ..order_a };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
+
+    // Test scenario 3: Order with zero token.
+
+    let order_a = Order { buy_token: dummy_token, ..order_a };
+    let order_b = Order { sell_token: dummy_token, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_TOKEN);
+
+    // Test scenario 4: Order with unregistered tokens.
+
+    let order_a = Order { buy_token: unregistered_token, ..order_a };
+    let order_b = Order { sell_token: unregistered_token, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::TOKEN_NOT_REGISTERED);
+
+    // Test scenario 5: Orders with different tokens.
+
+    let order_a = Order { buy_token: token_b, ..order_a };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
+
+    // Test scenario 6: Orders with same tokens.
+
+    let order_a = Order { buy_token: token_a, ..order_a };
+    let order_b = Order { sell_token: token_a, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
+
+    // Test scenario 7: Order with zero address.
+
+    let order_a = Order { user: dummy_user, buy_token: token_b, ..order_a };
+    let order_b = Order { sell_token: token_b, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_ADDRESS);
+
+    // Test scenario 8: Orders with same addresses.
+
+    let order_a = Order { user: user_b, ..order_a };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TRADE_SAME_USER);
+
+    // Test scenario 9: Order with zero sell amount.
+
+    let order_a = Order { user: user_a, sell_amount: 0, ..order_a };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_AMOUNT);
+
+    // Test scenario 10: Order with zero buy amount.
+
+    let order_a = Order { sell_amount: 100, ..order_a };
+    let order_b = Order { buy_amount: 0, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_AMOUNT);
+
+    // Test scenario 11: Trade with zero actual sell amount.
+
+    let order_b = Order { buy_amount: 100, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 0,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
+
+    // Test scenario 12: Trade with zero actual buy amount.
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 0,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
+
+    // Test scenario 13: Orders with expired timestamps.
+
+    start_cheat_block_timestamp_global(block_timestamp: 101);
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::ORDER_EXPIRED);
+
+    // Test scenario 14: Order with unapproved counterparty.
+
+    let order_a = Order {
+        expiry: Timestamp { seconds: 101 },
+        approved_counterparties: array![dummy_user, user_a].span(),
+        ..order_a,
+    };
+    let order_b = Order { expiry: Timestamp { seconds: 101 }, ..order_b };
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            signature_a: empty_signature,
+            signature_b: empty_signature,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::UNAPPROVED_COUNTERPARTY);
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_invalid_trade_scenarios() {
+    // Setup:
+    let (contract_address, token_a, token_b, user_a, user_b, key_pair_a, key_pair_b) = test_setup();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+
+    // Add tokens.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_a).unwrap();
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.register_token(token: token_b).unwrap();
+
+    // Add users to allowlist.
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_a).unwrap();
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
+    dispatcher.add_to_allowlist(address: user_b).unwrap();
+
+    let order_a = Order {
+        salt: 1,
+        expiry: Timestamp { seconds: 100 },
+        user: user_a,
+        sell_token: token_a,
+        buy_token: token_b,
+        sell_amount: 100,
+        buy_amount: 1,
+        approved_counterparties: array![].span(),
+    };
+
+    let order_b = Order {
+        user: user_b,
+        sell_token: token_b,
+        buy_token: token_a,
+        sell_amount: 1,
+        buy_amount: 100,
+        approved_counterparties: array![user_a].span(),
+        ..order_a,
+    };
+
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    // Approve tokens:
+    let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
+    cheat_caller_address_once(token_a, caller_address: user_a);
+    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
+    cheat_caller_address_once(token_b, caller_address: user_b);
+    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+
+    // Test scenario 1: Actual amounts above ordered.
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 200,
+            order_a_actual_buy_amount: 2,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
+
+    // Test scenario 2: High buy amount.
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 10,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
+
+    // Test scenario 3: Low sell amount.
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 90,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
+
+    // Test scenario 4: Fulfilled order.
+
+    dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        )
+        .unwrap();
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
+
+    // Test scenario 5: Canceled order.
+
+    let order_a = Order { salt: 2, ..order_a };
+    let order_b = Order { salt: 2, ..order_b };
+
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let message_hash_b = order_b.get_message_hash(user_b);
+    let (r, s) = key_pair_b.sign(message_hash_b).unwrap();
+    let signature_b = array![r, s].span();
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.cancel_orders(orders: array![order_a].span()).unwrap();
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
+
+    // Test scenario 6: Paused system.
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::SECURITY_AGENT);
+    IPausableDispatcher { contract_address }.pause();
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            :signature_b,
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: 'PAUSED');
+
+    // Test scenario 7: Invalid signature.
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::SECURITY_ADMIN);
+    IPausableDispatcher { contract_address }.unpause();
+
+    let order_a = Order { salt: 3, ..order_a };
+    let message_hash_a = order_a.get_message_hash(user_a);
+    let (r, s) = key_pair_a.sign(message_hash_a).unwrap();
+    let signature_a = array![r, s].span();
+
+    let result = dispatcher
+        .trade(
+            :order_a,
+            :order_b,
+            :signature_a,
+            signature_b: signature_a, // Invalid signature.
+            order_a_actual_sell_amount: 100,
+            order_a_actual_buy_amount: 1,
+        );
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_STARK_SIGNATURE);
 }
