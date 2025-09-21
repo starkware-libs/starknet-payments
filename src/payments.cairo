@@ -214,42 +214,45 @@ pub mod payments {
             let fee_a = self._calculate_fee(order_a_actual_sell_amount);
             // For `order_b`, the actual sold amount is `order_a_actual_buy_amount`.
             let fee_b = self._calculate_fee(order_a_actual_buy_amount);
-            assert_with_byte_array(
-                sell_token.transfer_from(order_a.user, fee_recipient, fee_a.into()),
-                transfer_failed_error(
-                    token: order_a.sell_token, sender: order_a.user, amount: fee_a,
-                ),
-            );
-            assert_with_byte_array(
-                buy_token.transfer_from(order_b.user, fee_recipient, fee_b.into()),
-                transfer_failed_error(
-                    token: order_a.buy_token, sender: order_b.user, amount: fee_b,
-                ),
-            );
+
+            // Transfer fees only if they are non-zero
+            if fee_a.is_non_zero() {
+                assert_with_byte_array(
+                    sell_token.transfer_from(order_a.user, fee_recipient, fee_a.into()),
+                    transfer_failed_error(
+                        token: order_a.sell_token, sender: order_a.user, amount: fee_a,
+                    ),
+                );
+            }
+            if fee_b.is_non_zero() {
+                assert_with_byte_array(
+                    buy_token.transfer_from(order_b.user, fee_recipient, fee_b.into()),
+                    transfer_failed_error(
+                        token: order_a.buy_token, sender: order_b.user, amount: fee_b,
+                    ),
+                );
+            }
 
             // Transfer the actual amounts.
-            assert_with_byte_array(
-                sell_token
-                    .transfer_from(
-                        order_a.user, order_b.user, (order_a_actual_sell_amount - fee_a).into(),
+            let net_sell_amount = order_a_actual_sell_amount - fee_a;
+            let net_buy_amount = order_a_actual_buy_amount - fee_b;
+
+            if net_sell_amount.is_non_zero() {
+                assert_with_byte_array(
+                    sell_token.transfer_from(order_a.user, order_b.user, net_sell_amount.into()),
+                    transfer_failed_error(
+                        token: order_a.sell_token, sender: order_a.user, amount: net_sell_amount,
                     ),
-                transfer_failed_error(
-                    token: order_a.sell_token,
-                    sender: order_a.user,
-                    amount: order_a_actual_sell_amount - fee_a,
-                ),
-            );
-            assert_with_byte_array(
-                buy_token
-                    .transfer_from(
-                        order_b.user, order_a.user, (order_a_actual_buy_amount - fee_b).into(),
+                );
+            }
+            if net_buy_amount.is_non_zero() {
+                assert_with_byte_array(
+                    buy_token.transfer_from(order_b.user, order_a.user, net_buy_amount.into()),
+                    transfer_failed_error(
+                        token: order_a.buy_token, sender: order_b.user, amount: net_buy_amount,
                     ),
-                transfer_failed_error(
-                    token: order_a.buy_token,
-                    sender: order_b.user,
-                    amount: order_a_actual_buy_amount - fee_b,
-                ),
-            );
+                );
+            }
 
             // Emit an event.
             self

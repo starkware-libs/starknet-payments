@@ -574,7 +574,6 @@ fn test_invalid_trade_scenarios() {
         initial_balance: constants::INITIAL_BALANCE,
     );
     let dispatcher = IPaymentsSafeDispatcher { contract_address };
-    let mut spy = snforge_std::spy_events();
 
     // Add tokens.
     cheat_caller_address_once(:contract_address, caller_address: testing_constants::APP_GOVERNOR);
