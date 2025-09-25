@@ -843,6 +843,8 @@ fn test_successful_trade() {
         buy_token: token_b,
         order_a_sell_amount: 7560,
         order_a_buy_amount: 850,
+        fee_a: 76,
+        fee_b: 9,
     };
     assert_expected_event_emitted(
         spied_event: events[4],
