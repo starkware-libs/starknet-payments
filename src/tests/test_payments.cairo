@@ -171,6 +171,46 @@ fn test_failed_address_allowlist() {
 }
 
 #[test]
+fn test_successful_set_dust_limit() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsDispatcher { contract_address };
+    let mut spy = snforge_std::spy_events();
+
+    const NEW_DUST_LIMIT: u128 = 20000;
+
+    assert!(dispatcher.get_dust_limit() == constants::DUST_LIMIT);
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    dispatcher.set_dust_limit(dust_limit: NEW_DUST_LIMIT);
+
+    assert!(dispatcher.get_dust_limit() == NEW_DUST_LIMIT);
+
+    // Catch the events.
+    let events = spy.get_events().emitted_by(contract_address).events;
+    let expected_remove_token_event = events::DustLimitSet { dust_limit: NEW_DUST_LIMIT };
+    assert_expected_event_emitted(
+        spied_event: events[0],
+        expected_event: expected_remove_token_event,
+        expected_event_selector: @selector!("DustLimitSet"),
+        expected_event_name: "DustLimitSet",
+    );
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_failed_set_dust_limit() {
+    let contract_address = init_contract_with_roles();
+    let dispatcher = IPaymentsSafeDispatcher { contract_address };
+
+    let result = dispatcher.set_dust_limit(dust_limit: 1000);
+    assert_panic_with_error(:result, expected_error: "ONLY_OPERATOR");
+
+    cheat_caller_address_once(:contract_address, caller_address: testing_constants::OPERATOR);
+    let result = dispatcher.set_dust_limit(dust_limit: Zero::zero());
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_AMOUNT);
+}
+
+#[test]
 fn test_successful_set_fee() {
     let contract_address = init_contract_with_roles();
     let dispatcher = IPaymentsDispatcher { contract_address };
@@ -341,16 +381,16 @@ fn test_invalid_orders() {
         user: user_a,
         sell_token: token_a,
         buy_token: token_b,
-        sell_amount: 100,
-        buy_amount: 1,
+        sell_amount: 1000000,
+        buy_amount: 10000,
         approved_counterparties: array![].span(),
     };
     let order_b = Order {
         user: user_b,
         sell_token: token_b,
         buy_token: token_a,
-        sell_amount: 1,
-        buy_amount: 100,
+        sell_amount: 10000,
+        buy_amount: 1000000,
         approved_counterparties: array![user_a].span(),
         ..order_a,
     };
@@ -363,8 +403,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::UNALLOWED_ADDRESS);
 
@@ -383,8 +423,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
 
@@ -398,8 +438,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_TOKEN);
 
@@ -413,8 +453,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::TOKEN_NOT_REGISTERED);
 
@@ -427,8 +467,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
 
@@ -442,8 +482,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TOKEN_PAIR);
 
@@ -457,8 +497,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_ADDRESS);
 
@@ -471,8 +511,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_TRADE_SAME_USER);
 
@@ -485,14 +525,14 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_AMOUNT);
 
     // Test scenario 10: Order with zero buy amount.
 
-    let order_a = Order { sell_amount: 100, ..order_a };
+    let order_a = Order { sell_amount: 1000000, ..order_a };
     let order_b = Order { buy_amount: 0, ..order_b };
     let result = dispatcher
         .trade(
@@ -500,14 +540,14 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_ZERO_AMOUNT);
 
     // Test scenario 11: Trade with zero actual sell amount.
 
-    let order_b = Order { buy_amount: 100, ..order_b };
+    let order_b = Order { buy_amount: 1000000, ..order_b };
     let result = dispatcher
         .trade(
             :order_a,
@@ -519,7 +559,7 @@ fn test_invalid_orders() {
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
 
-    // Test scenario 12: Trade with zero actual buy amount.
+    // Test scenario 12: Trade with actual buy amount below dust.
 
     let result = dispatcher
         .trade(
@@ -527,10 +567,10 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 0,
+            order_a_actual_sell_amount: 100000,
+            order_a_actual_buy_amount: 1000,
         );
-    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
+    assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_BELOW_DUST_LIMIT);
 
     // Test scenario 13: Orders with expired timestamps.
 
@@ -541,8 +581,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::ORDER_EXPIRED);
 
@@ -560,8 +600,8 @@ fn test_invalid_orders() {
             :order_b,
             signature_a: empty_signature,
             signature_b: empty_signature,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::UNAPPROVED_COUNTERPARTY);
 }
@@ -593,8 +633,8 @@ fn test_invalid_trade_scenarios() {
         user: user_a,
         sell_token: token_a,
         buy_token: token_b,
-        sell_amount: 100,
-        buy_amount: 1,
+        sell_amount: 1000000,
+        buy_amount: 10000,
         approved_counterparties: array![].span(),
     };
 
@@ -602,8 +642,8 @@ fn test_invalid_trade_scenarios() {
         user: user_b,
         sell_token: token_b,
         buy_token: token_a,
-        sell_amount: 1,
-        buy_amount: 100,
+        sell_amount: 10000,
+        buy_amount: 1000000,
         approved_counterparties: array![user_a].span(),
         ..order_a,
     };
@@ -619,11 +659,11 @@ fn test_invalid_trade_scenarios() {
     // Approve tokens:
     let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
     cheat_caller_address_once(token_a, caller_address: user_a);
-    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_a_dispatcher.approve(spender: contract_address, amount: 100000000);
 
     let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
     cheat_caller_address_once(token_b, caller_address: user_b);
-    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_b_dispatcher.approve(spender: contract_address, amount: 100000000);
 
     // Test scenario 1: Actual amounts above ordered.
 
@@ -633,8 +673,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 200,
-            order_a_actual_buy_amount: 2,
+            order_a_actual_sell_amount: 2000000,
+            order_a_actual_buy_amount: 20000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
 
@@ -646,8 +686,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 10,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 100000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
 
@@ -659,8 +699,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 90,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 900000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_RATIO);
 
@@ -672,8 +712,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         )
         .unwrap();
 
@@ -683,8 +723,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
 
@@ -710,8 +750,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_AMOUNT_TOO_LARGE);
 
@@ -726,8 +766,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: 'PAUSED');
 
@@ -747,8 +787,8 @@ fn test_invalid_trade_scenarios() {
             :order_b,
             :signature_a,
             signature_b: signature_a, // Invalid signature.
-            order_a_actual_sell_amount: 100,
-            order_a_actual_buy_amount: 1,
+            order_a_actual_sell_amount: 1000000,
+            order_a_actual_buy_amount: 10000,
         );
     assert_panic_with_felt_error(:result, expected_error: errors::INVALID_STARK_SIGNATURE);
 }
@@ -780,8 +820,8 @@ fn test_successful_trade() {
         user: user_a,
         sell_token: token_a,
         buy_token: token_b,
-        sell_amount: 10000,
-        buy_amount: 1000,
+        sell_amount: 100000000,
+        buy_amount: 10000000,
         approved_counterparties: array![].span(),
     };
 
@@ -789,8 +829,8 @@ fn test_successful_trade() {
         user: user_b,
         sell_token: token_b,
         buy_token: token_a,
-        sell_amount: 900,
-        buy_amount: 8000,
+        sell_amount: 90000000,
+        buy_amount: 80000000,
         approved_counterparties: array![user_a].span(),
         ..order_a,
     };
@@ -806,11 +846,11 @@ fn test_successful_trade() {
     // Approve tokens:
     let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
     cheat_caller_address_once(token_a, caller_address: user_a);
-    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_a_dispatcher.approve(spender: contract_address, amount: 100000000);
 
     let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
     cheat_caller_address_once(token_b, caller_address: user_b);
-    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_b_dispatcher.approve(spender: contract_address, amount: 100000000);
 
     // Test:
     // 8000/900 <= 7560/850 <= 10000/1000
@@ -820,18 +860,18 @@ fn test_successful_trade() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 7560,
-            order_a_actual_buy_amount: 850,
+            order_a_actual_sell_amount: 75600000,
+            order_a_actual_buy_amount: 8500000,
         );
 
     // Checks:
-    assert_eq!(token_a_dispatcher.balance_of(user_a), 2440);
-    assert_eq!(token_a_dispatcher.balance_of(user_b), 7484);
-    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 76);
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 24400000);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 74844000);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 756000);
 
-    assert_eq!(token_b_dispatcher.balance_of(user_a), 841);
-    assert_eq!(token_b_dispatcher.balance_of(user_b), 9150);
-    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 9);
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 8415000);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 91500000);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 85000);
 
     // Catch the events.
     let events = spy.get_events().emitted_by(contract_address).events;
@@ -840,10 +880,10 @@ fn test_successful_trade() {
         user_b,
         sell_token: token_a,
         buy_token: token_b,
-        order_a_sell_amount: 7560,
-        order_a_buy_amount: 850,
-        fee_a: 76,
-        fee_b: 9,
+        order_a_sell_amount: 75600000,
+        order_a_buy_amount: 8500000,
+        fee_a: 756000,
+        fee_b: 85000,
     };
     assert_expected_event_emitted(
         spied_event: events[4],
@@ -964,8 +1004,8 @@ fn test_successful_flow() {
         user: user_a,
         sell_token: token_a,
         buy_token: token_b,
-        sell_amount: 100,
-        buy_amount: 10,
+        sell_amount: 1000000,
+        buy_amount: 100000,
         approved_counterparties: array![].span(),
     };
 
@@ -973,8 +1013,8 @@ fn test_successful_flow() {
         user: user_b,
         sell_token: token_b,
         buy_token: token_a,
-        sell_amount: 5,
-        buy_amount: 50,
+        sell_amount: 50000,
+        buy_amount: 500000,
         approved_counterparties: array![user_a].span(),
         ..order_a,
     };
@@ -990,11 +1030,11 @@ fn test_successful_flow() {
     // Approve tokens:
     let token_a_dispatcher = IERC20Dispatcher { contract_address: token_a };
     cheat_caller_address_once(token_a, caller_address: user_a);
-    token_a_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_a_dispatcher.approve(spender: contract_address, amount: 10000000);
 
     let token_b_dispatcher = IERC20Dispatcher { contract_address: token_b };
     cheat_caller_address_once(token_b, caller_address: user_b);
-    token_b_dispatcher.approve(spender: contract_address, amount: 10000);
+    token_b_dispatcher.approve(spender: contract_address, amount: 10000000);
 
     // Stage 1:
 
@@ -1005,21 +1045,21 @@ fn test_successful_flow() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 50,
-            order_a_actual_buy_amount: 5,
+            order_a_actual_sell_amount: 500000,
+            order_a_actual_buy_amount: 50000,
         );
 
     // Checks:
-    assert_eq!(token_a_dispatcher.balance_of(user_a), 9950);
-    assert_eq!(token_a_dispatcher.balance_of(user_b), 45);
-    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 5);
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 99500000);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 455000);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 45000);
 
-    assert_eq!(token_b_dispatcher.balance_of(user_a), 4);
-    assert_eq!(token_b_dispatcher.balance_of(user_b), 9995);
-    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 1);
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 45500);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 99950000);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 4500);
 
-    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 50);
-    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 5);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 500000);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 50000);
 
     // Stage 2:
 
@@ -1038,21 +1078,21 @@ fn test_successful_flow() {
             :order_b,
             :signature_a,
             :signature_b,
-            order_a_actual_sell_amount: 50,
-            order_a_actual_buy_amount: 5,
+            order_a_actual_sell_amount: 500000,
+            order_a_actual_buy_amount: 50000,
         );
 
     // Checks:
-    assert_eq!(token_a_dispatcher.balance_of(user_a), 9900);
-    assert_eq!(token_a_dispatcher.balance_of(user_b), 90);
-    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 5);
-    assert_eq!(token_a_dispatcher.balance_of(new_fee_recipient), 5);
+    assert_eq!(token_a_dispatcher.balance_of(user_a), 99000000);
+    assert_eq!(token_a_dispatcher.balance_of(user_b), 910000);
+    assert_eq!(token_a_dispatcher.balance_of(constants::FEE_RECIPIENT), 45000);
+    assert_eq!(token_a_dispatcher.balance_of(new_fee_recipient), 45000);
 
-    assert_eq!(token_b_dispatcher.balance_of(user_a), 8);
-    assert_eq!(token_b_dispatcher.balance_of(user_b), 9990);
-    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 1);
-    assert_eq!(token_b_dispatcher.balance_of(new_fee_recipient), 1);
+    assert_eq!(token_b_dispatcher.balance_of(user_a), 91000);
+    assert_eq!(token_b_dispatcher.balance_of(user_b), 99900000);
+    assert_eq!(token_b_dispatcher.balance_of(constants::FEE_RECIPIENT), 4500);
+    assert_eq!(token_b_dispatcher.balance_of(new_fee_recipient), 4500);
 
-    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 100);
-    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 5);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_a), 1000000);
+    assert_eq!(dispatcher.get_order_fulfillment(message_hash_b), 50000);
 }

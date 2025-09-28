@@ -12,16 +12,18 @@ use crate::payments::payments::SNIP12MetadataImpl;
 pub mod constants {
     use super::*;
     pub const UPGRADE_DELAY: u64 = 0;
+    pub const DUST_LIMIT: u128 = 10000;
     pub const FEE_LIMIT: u128 = 1000;
     pub const FEE_RECIPIENT: ContractAddress = 'FEE_RECIPIENT'.try_into().unwrap();
     pub const FEE: u128 = 100;
-    pub const INITIAL_BALANCE: u256 = 10_000;
+    pub const INITIAL_BALANCE: u256 = 100_000_000;
 }
 
 fn deploy_contract() -> ContractAddress {
     let mut calldata = array![];
     calldata.append_serde(testing_constants::GOVERNANCE_ADMIN);
     calldata.append_serde(constants::UPGRADE_DELAY);
+    calldata.append_serde(constants::DUST_LIMIT);
     calldata.append_serde(constants::FEE_LIMIT);
     calldata.append_serde(constants::FEE_RECIPIENT);
     calldata.append_serde(constants::FEE);
