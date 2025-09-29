@@ -21,15 +21,15 @@ pub mod payments {
     use starkware_utils::signature::stark::{HashType, Signature};
     use starkware_utils::time::time::Time;
     use crate::errors::{
-        ADDRESS_ALREADY_ALLOWED, INVALID_AMOUNT_RATIO, INVALID_AMOUNT_TOO_LARGE,
-        INVALID_DOWNCAST_AFTER_DIVISION, INVALID_HIGH_FEE, INVALID_HIGH_FEE_LIMIT,
-        INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER, INVALID_ZERO_ADDRESS, INVALID_ZERO_AMOUNT,
-        INVALID_ZERO_TOKEN, ORDER_EXPIRED, TOKEN_ALREADY_REGISTERED, TOKEN_NOT_REGISTERED,
-        UNALLOWED_ADDRESS, UNAPPROVED_COUNTERPARTY, transfer_failed_error,
+        ADDRESS_ALREADY_ALLOWED, INVALID_AMOUNT_BELOW_DUST_LIMIT, INVALID_AMOUNT_RATIO,
+        INVALID_AMOUNT_TOO_LARGE, INVALID_DOWNCAST_AFTER_DIVISION, INVALID_HIGH_FEE,
+        INVALID_HIGH_FEE_LIMIT, INVALID_TOKEN_PAIR, INVALID_TRADE_SAME_USER, INVALID_ZERO_ADDRESS,
+        INVALID_ZERO_AMOUNT, INVALID_ZERO_TOKEN, ORDER_EXPIRED, TOKEN_ALREADY_REGISTERED,
+        TOKEN_NOT_REGISTERED, UNALLOWED_ADDRESS, UNAPPROVED_COUNTERPARTY, transfer_failed_error,
     };
     use crate::events::{
-        AddressAllowed, AddressDisallowed, FeeRecipientSet, FeeSet, OrderCanceled, TokenRegistered,
-        TokenRemoved, TradeExecuted,
+        AddressAllowed, AddressDisallowed, DustLimitSet, FeeRecipientSet, FeeSet, OrderCanceled,
+        TokenRegistered, TokenRemoved, TradeExecuted,
     };
     use crate::interface::IPayments;
     use crate::order::Order;
@@ -82,6 +82,7 @@ pub mod payments {
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         // --- Payment ---
+        dust_limit: u128,
         fee_limit: u128,
         fee_recipient: ContractAddress,
         fee: u128,
@@ -114,6 +115,7 @@ pub mod payments {
         AddressDisallowed: AddressDisallowed,
         TradeExecuted: TradeExecuted,
         OrderCanceled: OrderCanceled,
+        DustLimitSet: DustLimitSet,
     }
 
 
@@ -122,6 +124,7 @@ pub mod payments {
         ref self: ContractState,
         governance_admin: ContractAddress,
         upgrade_delay: u64,
+        dust_limit: u128,
         fee_limit: u128,
         fee_recipient: ContractAddress,
         fee: u128,
@@ -129,6 +132,7 @@ pub mod payments {
         self.roles.initialize(:governance_admin);
         self.replaceability.initialize(:upgrade_delay);
 
+        self._set_dust_limit(dust_limit);
         assert(fee_limit <= MAX_BASIS_POINTS.into(), INVALID_HIGH_FEE_LIMIT);
         self.fee_limit.write(fee_limit);
         self._set_fee_recipient(recipient: fee_recipient);
@@ -329,6 +333,11 @@ pub mod payments {
 
         // Setters:
 
+        fn set_dust_limit(ref self: ContractState, dust_limit: u128) {
+            self.roles.only_operator();
+
+            self._set_dust_limit(:dust_limit);
+        }
         fn set_fee(ref self: ContractState, fee: u128) {
             self.roles.only_operator();
 
@@ -341,6 +350,10 @@ pub mod payments {
         }
 
         // Getters:
+
+        fn get_dust_limit(self: @ContractState) -> u128 {
+            self.dust_limit.read()
+        }
 
         fn get_fee_limit(self: @ContractState) -> u128 {
             self.fee_limit.read()
@@ -368,6 +381,14 @@ pub mod payments {
     // Internal methods
     #[generate_trait]
     pub impl ImplInternalPayments of InternalPaymentsTrait {
+        fn _set_dust_limit(ref self: ContractState, dust_limit: u128) {
+            assert(dust_limit.is_non_zero(), INVALID_ZERO_AMOUNT);
+            self.dust_limit.write(dust_limit);
+
+            // Emit an event.
+            self.emit(DustLimitSet { dust_limit });
+        }
+
         fn _set_fee(ref self: ContractState, fee: u128) {
             assert(fee <= self.fee_limit.read(), INVALID_HIGH_FEE);
             self.fee.write(fee);
@@ -476,8 +497,9 @@ pub mod payments {
                 INVALID_AMOUNT_RATIO,
             );
 
-            assert(order_a_actual_sell_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
-            assert(order_a_actual_buy_amount.is_non_zero(), INVALID_ZERO_AMOUNT);
+            let dust_limit = self.dust_limit.read();
+            assert(order_a_actual_sell_amount >= dust_limit, INVALID_AMOUNT_BELOW_DUST_LIMIT);
+            assert(order_a_actual_buy_amount >= dust_limit, INVALID_AMOUNT_BELOW_DUST_LIMIT);
 
             // Validate approved counterparties.
             assert(

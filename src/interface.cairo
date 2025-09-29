@@ -26,11 +26,13 @@ pub trait IPayments<TContractState> {
 
     // Setters:
 
+    fn set_dust_limit(ref self: TContractState, dust_limit: u128);
     fn set_fee(ref self: TContractState, fee: u128);
     fn set_fee_recipient(ref self: TContractState, recipient: ContractAddress);
 
     // Getters:
 
+    fn get_dust_limit(self: @TContractState) -> u128;
     fn get_fee_limit(self: @TContractState) -> u128;
     fn get_fee(self: @TContractState) -> u128;
     fn get_fee_recipient(self: @TContractState) -> ContractAddress;
